@@ -37,7 +37,7 @@ Este workspace agrupa todos los paquetes, controladores y configuraciones desarr
 ```bash
 ssh puzzlebot@192.168.137.???
 export ROS_DOMAIN_ID=0
-export ROS_IP=192.168.137.139
+export ROS_IP=192.168.137.???
 ros2 launch puzzlebot_ros micro_ros_agent.launch.py
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 cd ~/ros2_ws
