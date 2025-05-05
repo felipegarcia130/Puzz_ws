@@ -12,7 +12,7 @@ Este workspace agrupa todos los paquetes, controladores y configuraciones desarr
 |--------------------------|-----------------------------------------------------------------------------|
 | `.vscode/`               | Configuraciones del entorno de desarrollo (extensiones, launch.json, etc.) |
 | `build/`, `install/`, `log/` | Directorios generados automáticamente por colcon                        |
-| `green_tracker_pkg/`     | Paquete de seguimiento visual de objetos verdes (visión artificial)         |
+| `green_tracker_pkg/`     | Paquete de seguimiento visual de objetos verdes y semáforo (visión artificial)         |
 | `mi_control_puzzlebot/`  | Controladores PID personalizados y nodos de control cerrado                 |
 | `my_navigation_system/`  | Sistema completo de navegación con waypoints y control                      |
 | `open_loop_control/`     | Control en lazo abierto para pruebas simples                                |
@@ -35,7 +35,12 @@ Este workspace agrupa todos los paquetes, controladores y configuraciones desarr
 ## 🚀 Uso básico
 
 ```bash
-cd puzz_ws
-colcon build
-source install/setup.bash
-ros2 launch puzzlebot_control control_launch.py
+ssh puzzlebot@192.168.137.???
+export ROS_DOMAIN_ID=0
+export ROS_IP=192.168.137.139
+ros2 launch puzzlebot_ros micro_ros_agent.launch.py
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+cd ~/ros2_ws
+ros2 pkg create --build-type ament_python package_name node_name
+colcon build --packages-select name
+
