@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.5)
+project(my_navigation_system)
+
+# Encuentra los paquetes necesarios
+find_package(ament_cmake REQUIRED)
+find_package(rclpy REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+
+# Instalación del paquete Python
+ament_python_install_package(${PROJECT_NAME})
+
+# Exporta dependencias
+ament_package()

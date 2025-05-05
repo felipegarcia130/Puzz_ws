@@ -1,0 +1,15 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="empty_world">
+    <!-- Plano base -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+    <!-- Cielo / sol -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <!-- Puedes añadir aquí más includes o modelos -->
+  </world>
+</sdf>
+

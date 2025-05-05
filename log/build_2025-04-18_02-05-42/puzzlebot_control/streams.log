@@ -1,0 +1,21 @@
+[60.156s] Invoking command in '/home/puzzlebot/ros2_ws/src/puzzlebot_control': PYTHONPATH=/home/puzzlebot/ros2_ws/src/build/puzzlebot_control/prefix_override:/home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages:${PYTHONPATH} /usr/bin/python3 setup.py egg_info --egg-base ../build/puzzlebot_control build --build-base /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build install --record /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/install.log --single-version-externally-managed
+[61.657s] running egg_info
+[61.659s] writing ../build/puzzlebot_control/puzzlebot_control.egg-info/PKG-INFO
+[61.660s] writing dependency_links to ../build/puzzlebot_control/puzzlebot_control.egg-info/dependency_links.txt
+[61.661s] writing entry points to ../build/puzzlebot_control/puzzlebot_control.egg-info/entry_points.txt
+[61.661s] writing requirements to ../build/puzzlebot_control/puzzlebot_control.egg-info/requires.txt
+[61.661s] writing top-level names to ../build/puzzlebot_control/puzzlebot_control.egg-info/top_level.txt
+[61.819s] reading manifest file '../build/puzzlebot_control/puzzlebot_control.egg-info/SOURCES.txt'
+[62.515s] writing manifest file '../build/puzzlebot_control/puzzlebot_control.egg-info/SOURCES.txt'
+[62.515s] running build
+[62.516s] running build_py
+[62.517s] running install
+[62.527s] running install_lib
+[63.672s] running install_data
+[63.674s] running install_egg_info
+[63.731s] removing '/home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control-0.0.0-py3.8.egg-info' (and everything under it)
+[63.732s] Copying ../build/puzzlebot_control/puzzlebot_control.egg-info to /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control-0.0.0-py3.8.egg-info
+[64.709s] running install_scripts
+[64.872s] Installing open_loop_ctrl script to /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/puzzlebot_control
+[64.874s] writing list of installed files to '/home/puzzlebot/ros2_ws/src/build/puzzlebot_control/install.log'
+[64.986s] Invoked command in '/home/puzzlebot/ros2_ws/src/puzzlebot_control' returned '0': PYTHONPATH=/home/puzzlebot/ros2_ws/src/build/puzzlebot_control/prefix_override:/home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages:${PYTHONPATH} /usr/bin/python3 setup.py egg_info --egg-base ../build/puzzlebot_control build --build-base /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build install --record /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/install.log --single-version-externally-managed

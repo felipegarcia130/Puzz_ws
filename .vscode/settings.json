@@ -1,0 +1,17 @@
+{
+    "ros.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/puzzlebot/ros2_ws/build/puzzlebot_ros",
+        "/home/puzzlebot/ros2_ws/install/puzzlebot_ros/lib/python3.8/site-packages",
+        "/home/puzzlebot/ros2_ws/install/mi_control_puzzlebot/lib/python3.8/site-packages",
+        "/home/puzzlebot/ros2_packages_ws/install/micro_ros_msgs/lib/python3.8/site-packages",
+        "/opt/ros/humble/lib/python3.8/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/puzzlebot/ros2_ws/build/puzzlebot_ros",
+        "/home/puzzlebot/ros2_ws/install/puzzlebot_ros/lib/python3.8/site-packages",
+        "/home/puzzlebot/ros2_ws/install/mi_control_puzzlebot/lib/python3.8/site-packages",
+        "/home/puzzlebot/ros2_packages_ws/install/micro_ros_msgs/lib/python3.8/site-packages",
+        "/opt/ros/humble/lib/python3.8/site-packages"
+    ]
+}

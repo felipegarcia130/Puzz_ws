@@ -1,0 +1,35 @@
+running egg_info
+creating ../build/puzzlebot_control/puzzlebot_control.egg-info
+writing ../build/puzzlebot_control/puzzlebot_control.egg-info/PKG-INFO
+writing dependency_links to ../build/puzzlebot_control/puzzlebot_control.egg-info/dependency_links.txt
+writing entry points to ../build/puzzlebot_control/puzzlebot_control.egg-info/entry_points.txt
+writing requirements to ../build/puzzlebot_control/puzzlebot_control.egg-info/requires.txt
+writing top-level names to ../build/puzzlebot_control/puzzlebot_control.egg-info/top_level.txt
+writing manifest file '../build/puzzlebot_control/puzzlebot_control.egg-info/SOURCES.txt'
+reading manifest file '../build/puzzlebot_control/puzzlebot_control.egg-info/SOURCES.txt'
+writing manifest file '../build/puzzlebot_control/puzzlebot_control.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build
+creating /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build/lib
+creating /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build/lib/puzzlebot_control
+copying puzzlebot_control/__init__.py -> /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build/lib/puzzlebot_control
+copying puzzlebot_control/open_loop_ctrl.py -> /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build/lib/puzzlebot_control
+running install
+running install_lib
+creating /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control
+copying /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build/lib/puzzlebot_control/__init__.py -> /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control
+copying /home/puzzlebot/ros2_ws/src/build/puzzlebot_control/build/lib/puzzlebot_control/open_loop_ctrl.py -> /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control
+byte-compiling /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control/__init__.py to __init__.cpython-38.pyc
+byte-compiling /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control/open_loop_ctrl.py to open_loop_ctrl.cpython-38.pyc
+running install_data
+creating /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/share/ament_index
+creating /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/share/ament_index/resource_index
+creating /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/share/ament_index/resource_index/packages
+copying resource/puzzlebot_control -> /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/share/ament_index/resource_index/packages
+copying package.xml -> /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/share/puzzlebot_control
+running install_egg_info
+Copying ../build/puzzlebot_control/puzzlebot_control.egg-info to /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/python3.8/site-packages/puzzlebot_control-0.0.0-py3.8.egg-info
+running install_scripts
+Installing open_loop_ctrl script to /home/puzzlebot/ros2_ws/src/install/puzzlebot_control/lib/puzzlebot_control
+writing list of installed files to '/home/puzzlebot/ros2_ws/src/build/puzzlebot_control/install.log'
