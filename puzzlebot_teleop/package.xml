@@ -12,6 +12,7 @@
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
 
   <!-- Dependencia en tiempo de ejecución para joy_node -->
   <exec_depend>joy</exec_depend>

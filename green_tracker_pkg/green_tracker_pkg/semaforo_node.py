@@ -160,14 +160,14 @@ class Semaforo(Node):
     def __init__(self):
         super().__init__('semaforo_node')
         self.bridge = CvBridge()
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel_safe', 10)
         self.debug_pub = self.create_publisher(Image, '/debug_image', 10)
         self.mask_pub = self.create_publisher(Image, '/mask_debug', 10)
         self.subscription = self.create_subscription(Image, '/image_raw', self.image_callback, 10)
 
         self.mission_started = False
         self.frames_since_green = 0
-        self.max_linear_vel = 0.2
+        self.max_linear_vel = 0.5
         self.max_angular_vel = 1.0
 
     def image_callback(self, msg):
@@ -175,8 +175,9 @@ class Semaforo(Node):
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         # Rango de colores HSV
-        lower_green = np.array([45, 80, 40])
-        upper_green = np.array([85, 255, 255])
+        lower_green = np.array([35, 40, 30])   # Verde más oscuro, menos saturado
+        upper_green = np.array([90, 255, 255]) # Verde muy brillante, incluso tirando a blanco
+
 
         lower_red1 = np.array([0, 120, 70])
         upper_red1 = np.array([10, 255, 255])

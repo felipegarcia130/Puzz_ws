@@ -9,7 +9,7 @@ import numpy as np
 class GreenTracker(Node):
     def __init__(self):
         super().__init__('green_tracker')
-        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.publisher = self.create_publisher(Twist, '/cmd_vel_safe', 10)
         self.subscription = self.create_subscription(Image, '/image_raw', self.image_callback, 10)
         self.debug_pub = self.create_publisher(Image, '/debug_image', 10)
         self.bridge = CvBridge()
