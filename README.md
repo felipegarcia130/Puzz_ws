@@ -1,9 +1,8 @@
 # 🤖 Puzzlebot ROS 2 Workspace
 
 <div align="center">
-  <img src=https://github.com/user-attachments/assets/70715ea1-7f8a-4e49-aabd-606409048acb>
+![Puzzlebot Logo](![image](https://github.com/user-attachments/assets/e77e8c1c-5957-4d51-8405-cc7eeca84900)
 
-![Puzzlebot Logo](https://via.placeholder.com/150x150)
 
 **Advanced mobile robotics platform for education and research**
 
