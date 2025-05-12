@@ -1,7 +1,7 @@
 # 🤖 Puzzlebot ROS 2 Workspace
 
 <div align="center">
-  <img ![Puzzlebot](https://github.com/user-attachments/assets/6c20fec5-3883-4be3-b402-44fbccc083f6)>
+  <img src=![Puzzlebot](https://github.com/user-attachments/assets/6c20fec5-3883-4be3-b402-44fbccc083f6)>
 
 
 
