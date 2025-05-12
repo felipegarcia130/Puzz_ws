@@ -28,6 +28,7 @@ setup(
             'green_tracker_node=green_tracker_pkg.green_tracker_node:main',
             'pose_estimatorg=green_tracker_pkg.pose_estimatorg:main',
             'path_geng=green_tracker_pkg.path_geng:main',
+            'closedgreencontroller=green_tracker_pkg.closedgreencontroller:main',
         ],
     },
 )

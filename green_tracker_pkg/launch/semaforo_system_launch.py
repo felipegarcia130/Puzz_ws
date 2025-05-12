@@ -31,5 +31,18 @@ def generate_launch_description():
             executable='semaforo_node',
             name='semaforo_node',
             output='screen'
+        ),
+        # 🛣️ Nodo de controlador de trayectoria
+        Node(
+            package='green_tracker_pkg',
+            executable='closedgreencontroller',
+            name='closed_loop_controller',
+            output='screen',
+            parameters=[
+                {'Kp_lin': 1.0},
+                {'Kp_ang': 2.0},
+                {'MAX_V': 0.5},
+                {'MAX_W': 1.0}
+            ]
         )
     ])
