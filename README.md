@@ -79,7 +79,7 @@ ros2 launch puzzlebot_ros micro_ros_agent.launch.py
 # In a new terminal, run teleop for manual control
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
-$ For the camera
+# For the camera
 ros2 run green_tracker_pkg jetson_camera_node
 ```
 
