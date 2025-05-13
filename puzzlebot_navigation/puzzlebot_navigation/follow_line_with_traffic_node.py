@@ -61,10 +61,15 @@ class FollowLineWithTraffic(Node):
         twist = Twist()
         self.slow_mode = False
 
+        
         if contours_yellow:
             if cv2.contourArea(max(contours_yellow, key=cv2.contourArea)) > 500:
-                self.slow_mode = True
-                self.get_logger().info('🟡 Amarillo detectado: modo lento.')
+                if self.mission_started:
+                    self.slow_mode = True
+                    self.get_logger().info('🟡 Amarillo detectado: modo lento.')
+                else:
+                    self.get_logger().info('🟡 Amarillo detectado pero misión no iniciada. Ignorando.')
+
 
         if contours_red:
             if cv2.contourArea(max(contours_red, key=cv2.contourArea)) > 500:
