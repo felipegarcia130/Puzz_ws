@@ -83,12 +83,15 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
 # For the camera
 ros2 run green_tracker_pkg jetson_camera_node
+
+# For the line follower
+ros2 run puzzlebot_navigation navigate_to_marker
 ```
 
 ### Running in Simulation
 ```bash
-# Launch Gazebo simulation
-ros2 launch puzzlebot_ros gazebo_simulation.launch.py
+# Launch Rviz simulation
+ros2 run rviz_simulator rviz_sim_node
 
 # Launch navigation stack
 ros2 launch my_navigation_system navigation.launch.py
