@@ -21,7 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'navigate_to_marker = puzzlebot_navigation.navigate_to_marker_node:main',
-            'follow_line_with_traffic_node = puzzlebot_navigation.follow_line_with_traffic_node:main',
+            'follow_line_with_traffic = puzzlebot_navigation.follow_line_with_traffic_node:main',
         ],
     },
 )
