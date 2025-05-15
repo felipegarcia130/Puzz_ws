@@ -33,7 +33,8 @@ class ClosedLoopController(Node):
 
         self.goal_pose = None
         self.current_pose = None
-        self.mission_active = False  # 🔑 NUEVO: semáforo
+        self.mission_active = False
+        self.slow_mode = False  # 🟡 NUEVO: Modo lento
         self.last_time = self.get_clock().now()
         self.e_sum_lin = 0.0
         self.e_last_lin = 0.0
@@ -44,6 +45,7 @@ class ClosedLoopController(Node):
         self.create_subscription(PoseStamped, '/goal_pose', self.goal_callback, 10)
         self.create_subscription(PoseStamped, '/estimated_pose', self.pose_callback, 10)
         self.create_subscription(Bool, '/mission_control', self.mission_callback, 10)
+        self.create_subscription(Bool, '/slow_down', self.slowdown_callback, 10)  # 🟡 NUEVO
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel_safe', 10)
         self.reached_pub = self.create_publisher(Bool, 'completed_point', 10)
 
@@ -55,6 +57,11 @@ class ClosedLoopController(Node):
         self.mission_active = msg.data
         estado = "🟢 ACTIVADO" if msg.data else "🔴 DETENIDO"
         self.get_logger().info(f'[Semáforo] Misión: {estado}')
+
+    def slowdown_callback(self, msg: Bool):
+        self.slow_mode = msg.data
+        estado = "🐢 LENTO" if msg.data else "🏃 NORMAL"
+        self.get_logger().info(f'[Semáforo] Velocidad: {estado}')
 
     def goal_callback(self, msg):
         self.goal_pose = msg
@@ -126,6 +133,11 @@ class ClosedLoopController(Node):
                     self.reached_pub.publish(Bool(data=True))
                     self.reached_sent = True
                     self.goal_pose = None
+
+        # 🐢 Aplicar reducción si está en modo lento
+        if self.slow_mode:
+            twist.linear.x *= 0.4
+            twist.angular.z *= 0.5
 
         self.cmd_pub.publish(twist)
 

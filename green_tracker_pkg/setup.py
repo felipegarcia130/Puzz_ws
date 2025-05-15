@@ -29,6 +29,7 @@ setup(
             'pose_estimatorg=green_tracker_pkg.pose_estimatorg:main',
             'path_geng=green_tracker_pkg.path_geng:main',
             'closedgreencontroller=green_tracker_pkg.closedgreencontroller:main',
+            'cmd_vel_safe_publisher=green_tracker_pkg.cmd_vel_safe_publisher:main',
         ],
     },
 )

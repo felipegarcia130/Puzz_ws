@@ -44,5 +44,11 @@ def generate_launch_description():
                 {'MAX_V': 0.5},
                 {'MAX_W': 1.0}
             ]
+        ),
+        Node(
+            package='green_tracker_pkg',
+            executable='cmd_vel_safe_publisher',
+            name='cmd_vel_safe_publisher',
+            output='screen'
         )
     ])

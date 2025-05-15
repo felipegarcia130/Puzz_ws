@@ -1,5 +1,3 @@
-
-
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
@@ -19,9 +17,8 @@ class Semaforo(Node):
         self.debug_pub = self.create_publisher(Image, '/debug_image', 10)
 
         self.subscription = self.create_subscription(Image, '/image_raw', self.image_callback, 10)
-
         self.mission_started = False
-        self.waiting_for_green = False  # 🔴 Nueva bandera de espera
+        self.waiting_for_green = False
 
     def image_callback(self, msg):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -41,10 +38,8 @@ class Semaforo(Node):
 
         # Máscaras
         mask_green = cv2.inRange(hsv, lower_green, upper_green)
-        mask_red = cv2.bitwise_or(
-            cv2.inRange(hsv, lower_red1, upper_red1),
-            cv2.inRange(hsv, lower_red2, upper_red2)
-        )
+        mask_red = cv2.bitwise_or(cv2.inRange(hsv, lower_red1, upper_red1),
+                                  cv2.inRange(hsv, lower_red2, upper_red2))
         mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
         kernel = np.ones((5, 5), np.uint8)
@@ -55,51 +50,50 @@ class Semaforo(Node):
 
         # Contornos
         contours_red, _ = cv2.findContours(mask_red, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        contours_yellow, _ = cv2.findContours(mask_yellow, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         contours_green, _ = cv2.findContours(mask_green, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours_yellow, _ = cv2.findContours(mask_yellow, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-        # 🔴 DETECCIÓN DE ROJO
+        # 🔴 Rojo → detener y esperar verde
         if contours_red:
             largest_red = max(contours_red, key=cv2.contourArea)
             if cv2.contourArea(largest_red) > 300:
-                self.get_logger().info('🟥 Rojo detectado → DETENIÉNDOSE y esperando verde')
+                self.get_logger().info('🟥 Rojo detectado: DETENIÉNDOSE')
                 self.mission_pub.publish(Bool(data=False))
                 self.slow_down_pub.publish(Bool(data=False))
                 self.mission_started = False
                 self.waiting_for_green = True
-                return  # No procesar amarillo ni verde
+                return
 
-        # Si está esperando verde, solo lo detecta y reanuda misión
-        if self.waiting_for_green:
-            if contours_green:
-                largest_green = max(contours_green, key=cv2.contourArea)
-                if cv2.contourArea(largest_green) > 300:
-                    self.get_logger().info('🟢 Verde detectado → REANUDANDO misión')
-                    self.mission_pub.publish(Bool(data=True))
-                    self.slow_down_pub.publish(Bool(data=False))
-                    self.mission_started = True
-                    self.waiting_for_green = False
-            return  # Mientras esté esperando verde, ignora el resto
+        # 🟢 Verde → reanudar si estaba esperando
+        if self.waiting_for_green and contours_green:
+            largest_green = max(contours_green, key=cv2.contourArea)
+            if cv2.contourArea(largest_green) > 300:
+                self.get_logger().info('🟢 Verde detectado: REANUDANDO MISIÓN')
+                self.mission_pub.publish(Bool(data=True))
+                self.slow_down_pub.publish(Bool(data=False))
+                self.mission_started = True
+                self.waiting_for_green = False
+                return
 
-        # 🟨 Amarillo: baja velocidad si ya está en movimiento
+        # 🟨 Amarillo → bajar velocidad si ya está en misión
         if contours_yellow and self.mission_started:
             largest_yellow = max(contours_yellow, key=cv2.contourArea)
             if cv2.contourArea(largest_yellow) > 300:
-                self.get_logger().info('🟨 Amarillo detectado → REDUCIENDO VELOCIDAD')
+                self.get_logger().info('🟨 Amarillo detectado: REDUCIENDO VELOCIDAD')
                 self.slow_down_pub.publish(Bool(data=True))
                 return
 
-        # 🟢 Verde: misión activa y velocidad normal
-        if contours_green:
+        # 🟢 Verde normal (inicio de misión si no está en rojo)
+        if contours_green and not self.mission_started:
             largest_green = max(contours_green, key=cv2.contourArea)
-            if cv2.contourArea(largest_green) > 300:
-                if not self.mission_started:
-                    self.get_logger().info('🟢 Verde detectado → INICIANDO MISIÓN')
-                    self.mission_pub.publish(Bool(data=True))
-                    self.mission_started = True
+            area = cv2.contourArea(largest_green)
+            if area > 300:
+                self.get_logger().info(f'🟢 Verde detectado: INICIANDO MISIÓN')
+                self.mission_pub.publish(Bool(data=True))
                 self.slow_down_pub.publish(Bool(data=False))
+                self.mission_started = True
 
-        # Si no hay colores válidos detectados
+        # Publicar imagen para debug
         self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, encoding='bgr8'))
 
 def main(args=None):
@@ -111,6 +105,7 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
 
 
 """import rclpy
