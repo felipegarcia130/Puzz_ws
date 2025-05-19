@@ -11,11 +11,16 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=[
+        'setuptools',
+        'opencv-python',
+        'numpy',
+        'simple-pid',
+    ],
     zip_safe=True,
     maintainer='felipe',
     maintainer_email='felisuper13@hotmail.com',
-    description='Seguidor de linea para el PuzzleBot',
+    description='Seguidor de línea para el PuzzleBot',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
@@ -26,3 +31,4 @@ setup(
         ],
     },
 )
+
