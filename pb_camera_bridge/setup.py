@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'puzzlebot_navigation'
+package_name = 'pb_camera_bridge'
 
 setup(
     name=package_name,
@@ -15,14 +15,12 @@ setup(
     zip_safe=True,
     maintainer='felipe',
     maintainer_email='felisuper13@hotmail.com',
-    description='Seguidor de linea para el PuzzleBot',
+    description='TODO: Package description',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'navigate_to_marker = puzzlebot_navigation.navigate_to_marker_node:main',
-            'follow_line_with_traffic = puzzlebot_navigation.follow_line_with_traffic_node:main',
-            'gstreamer = puzzlebot_navigation.gstreamer:main',
+             'http_camera_streamer = pb_camera_bridge.http_camera_streamer:main',
         ],
     },
 )

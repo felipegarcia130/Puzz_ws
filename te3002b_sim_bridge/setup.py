@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'puzzlebot_navigation'
+package_name = 'te3002b_sim_bridge'
 
 setup(
     name=package_name,
@@ -15,14 +15,12 @@ setup(
     zip_safe=True,
     maintainer='felipe',
     maintainer_email='felisuper13@hotmail.com',
-    description='Seguidor de linea para el PuzzleBot',
+    description='Bridge entre ROS 2 y simulador TE3002B',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'navigate_to_marker = puzzlebot_navigation.navigate_to_marker_node:main',
-            'follow_line_with_traffic = puzzlebot_navigation.follow_line_with_traffic_node:main',
-            'gstreamer = puzzlebot_navigation.gstreamer:main',
+            'rpc_image_node = te3002b_sim_bridge.rpc_image_node:main',
         ],
     },
 )
