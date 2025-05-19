@@ -90,9 +90,8 @@ ros2 run puzzlebot_navigation navigate_to_marker
 
 ### Running in Simulation
 ```bash
-# Launch Rviz simulation
-ros2 run rviz_simulator rviz_sim_node
-
+# Launch simulation using rpc_image_node.py
+ros2 run [package_name] rpc_image_node.py
 # Launch navigation stack
 ros2 launch my_navigation_system navigation.launch.py
 ```
