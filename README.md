@@ -82,10 +82,17 @@ ros2 launch puzzlebot_ros micro_ros_agent.launch.py
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
 # For the camera
+(In jetson)
 ros2 run green_tracker_pkg jetson_camera_node
+Or:
+(In Jetson)
+./start_camera.sh
+(In Laptop)
+ros2 run puzzlebot_navigation gstreamer
 
 # For the line follower
 ros2 run puzzlebot_navigation navigate_to_marker
+ros2 run puzzlebot_navigation follow_line_with_traffic_node
 ```
 
 ### Running in Simulation
