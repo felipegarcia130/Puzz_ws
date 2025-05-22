@@ -8,9 +8,9 @@ import numpy as np
 import math
 from simple_pid import PID
 
-class FollowLineWithTraffic(Node):
+class FollowTrafficChess(Node):
     def __init__(self):
-        super().__init__('follow_line_with_traffic_node')
+        super().__init__('follow_traffic_chess_node')
 
         self.bridge = CvBridge()
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel_safe', 10)
@@ -18,21 +18,39 @@ class FollowLineWithTraffic(Node):
         self.mask_pub = self.create_publisher(Image, '/mask_debug', 10)
         self.sub = self.create_subscription(Image, '/image_raw', self.image_callback, 10)
 
-        # Estado de misión
         self.mission_started = False
         self.slow_mode = False
+        self.flag_detected = False
+        self.pattern_size = (6, 5)
 
-        # PID
         self.max_yaw = math.radians(60)
         self.max_thr_normal = 0.2
         self.max_thr_slow = 0.1
         self.yaw_pid = PID(Kp=0.6, Ki=0, Kd=0.1, setpoint=0.0, output_limits=(-self.max_yaw, self.max_yaw))
 
-        self.get_logger().info('Nodo integrado de semáforo y seguidor de línea activo.')
+        self.get_logger().info('Nodo listo: línea, semáforo y meta activados.')
 
     def image_callback(self, msg):
+        if self.flag_detected:
+            self.get_logger().info('✅ Bandera ya detectada. Robot detenido permanentemente.')
+            self.cmd_pub.publish(Twist())
+            return
+
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # === RECORTE DE BORDES (evitar bordes amarillos del tapete) ===
+        # Recortes personalizados
+        crop_margin_horizontal = int(frame.shape[1] * 0.30)   # 30% por lado
+        crop_margin_top = int(frame.shape[0] * 0.05)          # 5% arriba
+        crop_margin_bottom = int(frame.shape[0] * 0.10)       # 10% abajo
+
+        # Aplicar recorte: [filas (y), columnas (x)]
+        frame_cropped = frame[
+            crop_margin_top : frame.shape[0] - crop_margin_bottom,
+            crop_margin_horizontal : frame.shape[1] - crop_margin_horizontal
+        ]
+
+        hsv = cv2.cvtColor(frame_cropped, cv2.COLOR_BGR2HSV)
 
         # === SEMÁFORO ===
         lower_green = np.array([35, 40, 30])
@@ -61,7 +79,6 @@ class FollowLineWithTraffic(Node):
         twist = Twist()
         self.slow_mode = False
 
-        
         if contours_yellow:
             if cv2.contourArea(max(contours_yellow, key=cv2.contourArea)) > 500:
                 if self.mission_started:
@@ -70,14 +87,11 @@ class FollowLineWithTraffic(Node):
                 else:
                     self.get_logger().info('🟡 Amarillo detectado pero misión no iniciada. Ignorando.')
 
-
         if contours_red:
             if cv2.contourArea(max(contours_red, key=cv2.contourArea)) > 500:
                 self.get_logger().info('🟥 Rojo detectado: detención total.')
                 self.mission_started = False
-                twist.linear.x = 0.0
-                twist.angular.z = 0.0
-                self.cmd_pub.publish(twist)
+                self.cmd_pub.publish(Twist())
                 return
 
         if contours_green:
@@ -92,18 +106,25 @@ class FollowLineWithTraffic(Node):
 
         # === SEGUIDOR DE LÍNEA ===
         throttle, yaw = self.follow_line(frame)
-
         twist.linear.x = float(throttle)
         twist.angular.z = float(yaw)
 
+        # === DETECCIÓN DE BANDERA DE META ===
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        ret, corners = cv2.findChessboardCorners(gray, self.pattern_size, None)
+        if ret:
+            self.get_logger().info("🚩 ¡Bandera de meta detectada!")
+            self.flag_detected = True
+            self.cmd_pub.publish(Twist())
+            cv2.drawChessboardCorners(frame, self.pattern_size, corners, ret)
+            self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, encoding="bgr8"))
+            return
 
         self.cmd_pub.publish(twist)
         self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, encoding="bgr8"))
 
     def follow_line(self, frame):
         frame_height, frame_width = frame.shape[:2]
-
-        # Línea negra sobre fondo claro
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         _, mask = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
         mask[:int(frame_height * 0.7), :] = 0
@@ -147,7 +168,7 @@ class FollowLineWithTraffic(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = FollowLineWithTraffic()
+    node = FollowTrafficChess()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
@@ -157,4 +178,4 @@ def main(args=None):
         rclpy.shutdown()
 
 if __name__ == '__main__':
-    main() 
+    main()

@@ -28,6 +28,8 @@ setup(
             'navigate_to_marker = puzzlebot_navigation.navigate_to_marker_node:main',
             'follow_line_with_traffic = puzzlebot_navigation.follow_line_with_traffic_node:main',
             'gstreamer = puzzlebot_navigation.gstreamer:main',
+            'chess_flag_detector = puzzlebot_navigation.chess_flag_detector:main',
+            'follow_traffic_chess = puzzlebot_navigation.follow_traffic_chess_node:main',
         ],
     },
 )
