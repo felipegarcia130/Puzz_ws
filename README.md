@@ -5,14 +5,6 @@
   <p><em>Figura 1. Puzzlebot armado.</em></p>
 </div>
 
-
-# 🤖 Puzzlebot ROS 2 Workspace
-
-<div align="center">
-  <img src=https://github.com/user-attachments/assets/6c20fec5-3883-4be3-b402-44fbccc083f6>
-  <p><em>Figura 1. Puzzlebot armado.</em></p>
-</div>
-
 **Advanced mobile robotics platform for education and research**
 
 [![ROS2 Humble](https://img.shields.io/badge/ROS2-Humble-blue)](https://docs.ros.org/en/humble/)
