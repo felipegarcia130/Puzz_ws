@@ -1,4 +1,4 @@
-import rclpy
+"""import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from sensor_msgs.msg import Image
@@ -104,11 +104,11 @@ def main(args=None):
     rclpy.shutdown()
 
 if __name__ == '__main__':
-    main()
+    main()"""
 
 
 
-"""import rclpy
+import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Image
@@ -230,4 +230,4 @@ def main(args=None):
     rclpy.shutdown()
 
 if __name__ == '__main__':
-    main()"""
+    main()
