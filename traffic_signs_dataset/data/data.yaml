@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 6
+names: ['Construction', 'Roundabout', 'Stop', 'Straight', 'Turn left', 'Turn right']
+
+roboflow:
+  workspace: felipe-z3k89
+  project: trafico-senales-puzzle
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/felipe-z3k89/trafico-senales-puzzle/dataset/1

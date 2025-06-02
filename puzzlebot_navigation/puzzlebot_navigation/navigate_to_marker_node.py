@@ -6,7 +6,74 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import math
-from simple_pid import PID
+import time
+
+class SimplePID:
+    def __init__(self, Kp=1.0, Ki=0.0, Kd=0.0, setpoint=0.0, output_limits=None):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.setpoint = setpoint
+        self.output_limits = output_limits
+        
+        # Variables de estado
+        self._integral = 0.0
+        self._last_error = 0.0
+        self._last_time = None
+        
+    def __call__(self, input_value):
+        current_time = time.time()
+        
+        # Calcular error
+        error = self.setpoint - input_value
+        
+        # Inicializar tiempo si es la primera llamada
+        if self._last_time is None:
+            self._last_time = current_time
+            self._last_error = error
+            return 0.0
+        
+        # Calcular delta de tiempo
+        dt = current_time - self._last_time
+        if dt <= 0.0:
+            dt = 1e-6  # Evitar división por cero
+        
+        # Término proporcional
+        proportional = self.Kp * error
+        
+        # Término integral
+        self._integral += error * dt
+        integral = self.Ki * self._integral
+        
+        # Término derivativo
+        derivative = self.Kd * (error - self._last_error) / dt
+        
+        # Salida del PID
+        output = proportional + integral + derivative
+        
+        # Aplicar límites de salida
+        if self.output_limits is not None:
+            min_limit, max_limit = self.output_limits
+            if output > max_limit:
+                output = max_limit
+                # Anti-windup: limitar integral si estamos saturados
+                self._integral -= error * dt
+            elif output < min_limit:
+                output = min_limit
+                # Anti-windup: limitar integral si estamos saturados
+                self._integral -= error * dt
+        
+        # Guardar valores para la siguiente iteración
+        self._last_error = error
+        self._last_time = current_time
+        
+        return output
+    
+    def reset(self):
+        """Reinicia el controlador PID"""
+        self._integral = 0.0
+        self._last_error = 0.0
+        self._last_time = None
 
 class LineFollowerNode(Node):
     def __init__(self):
@@ -20,7 +87,7 @@ class LineFollowerNode(Node):
         self.max_yaw = math.radians(60)
         self.max_thr = 0.2
         self.align_thres = 0.3
-        self.yaw_pid = PID(Kp=0.8, Ki=0.0, Kd=0.15, setpoint=0.0, output_limits=(-self.max_yaw, self.max_yaw))  # PID más agresivo
+        self.yaw_pid = SimplePID(Kp=0.8, Ki=0.0, Kd=0.15, setpoint=0.0, output_limits=(-self.max_yaw, self.max_yaw))  # PID más agresivo
 
         # Fallback control
         self.last_yaw = 0.0

@@ -2,25 +2,42 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>puzzlebot_navigation</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <version>1.0.0</version>
+  <description>Navigation package for puzzlebot with line following and intersection handling capabilities</description>
   <maintainer email="felisuper13@hotmail.com">felipe</maintainer>
-  <license>TODO: License declaration</license>
-
+  <license>MIT</license>
+  
+  <!-- Core ROS2 dependencies -->
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>std_msgs</depend>
+  
+  <!-- Image processing dependencies -->
   <depend>python3-opencv</depend>
   <depend>python3-numpy</depend>
+  
+  <!-- Control dependencies -->
   <depend>python3-simple-pid</depend>
-
+  
+  <!-- Optional but recommended for better functionality -->
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+  
+  <!-- Build dependencies -->
+  <build_depend>ament_cmake</build_depend>
+  
+  <!-- Test dependencies -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
-
+  
+  <!-- Additional useful dependencies for debugging and visualization -->
+  <exec_depend>image_transport</exec_depend>
+  <exec_depend>compressed_image_transport</exec_depend>
+  
   <export>
     <build_type>ament_python</build_type>
   </export>
