@@ -1218,7 +1218,7 @@ class LineFollowerNode(Node):
     def is_circle(self, contour):
         #Detecta círculos con filtros más estrictos para evitar cables y objetos lineales
         area = cv2.contourArea(contour)
-        if area < 50:  # Aumentamos el área mínima
+        if area < 40:  # Aumentamos el área mínima
             return False
             
         x, y, w, h = cv2.boundingRect(contour)
@@ -1238,7 +1238,7 @@ class LineFollowerNode(Node):
             return False
         
         # Filtro para objetos muy pequeños o muy grandes
-        if area < 50 or area > 15000:
+        if area < 40 or area > 15000:
             return False
         
         # Filtro adicional: verificar que no sea un objeto lineal
@@ -1271,12 +1271,12 @@ class LineFollowerNode(Node):
         lower_green = np.array([40, 80, 50])   # Más estricto para verde
         upper_green = np.array([80, 255, 255])
 
-        lower_red1 = np.array([0, 150, 100])  # Más estricto para rojo
+        lower_red1 = np.array([0, 100, 100])  # Más estricto para rojo
         upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([170, 150, 100])
+        lower_red2 = np.array([170, 100, 100])
         upper_red2 = np.array([180, 255, 255])
 
-        lower_yellow = np.array([20, 120, 120])  # Más estricto para amarillo
+        lower_yellow = np.array([20, 100, 120])  # Más estricto para amarillo
         upper_yellow = np.array([30, 255, 255])
 
         # Máscaras de color
@@ -1378,7 +1378,7 @@ class LineFollowerNode(Node):
                 largest_yellow = max(valid_yellows, key=cv2.contourArea)
                 area_yellow = cv2.contourArea(largest_yellow)
                 
-                if area_yellow > 200:  # Área mínima más grande
+                if area_yellow > 150:  # Área mínima más grande
                     self.slow_mode = True
                     self.get_logger().info(f'🟡 SEMÁFORO Amarillo detectado: MODO LENTO | Área: {area_yellow:.0f}')
                     cv2.drawContours(semaforo_debug, [largest_yellow], -1, (0, 255, 255), 3)
@@ -1393,7 +1393,7 @@ class LineFollowerNode(Node):
                 largest_red = max(valid_reds, key=cv2.contourArea)
                 area_red = cv2.contourArea(largest_red)
                 
-                if area_red > 200:  # Área mínima más grande
+                if area_red > 150:  # Área mínima más grande
                     self.get_logger().info(f'🟥 SEMÁFORO Rojo detectado: DETENIENDO | Área: {area_red:.0f}')
                     self.semaforo_active = False
                     cv2.drawContours(semaforo_debug, [largest_red], -1, (0, 0, 255), 3)
@@ -1427,7 +1427,7 @@ class LineFollowerNode(Node):
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
         return semaforo_debug
-
+    
     def image_callback(self, msg):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         

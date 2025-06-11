@@ -1,26 +1,12 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from geometry_msgs.msg import Twist, Point
-from std_msgs.msg import Bool, Int32, String
+from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import math
 import time
-from typing import List, Tuple, Optional
-from enum import Enum
-
-class RobotState(Enum):
-    FOLLOWING_LINE = 1
-    INTERSECTION_DETECTED = 2
-    TURNING = 3
-    LOST = 4
-
-class TurnDirection(Enum):
-    LEFT = 1
-    RIGHT = 2
-    STRAIGHT = 3
 
 class SimplePID:
     def __init__(self, Kp=1.0, Ki=0.0, Kd=0.0, setpoint=0.0, output_limits=None):
@@ -84,221 +70,246 @@ class SimplePID:
         return output
     
     def reset(self):
-        """Reinicia el controlador PID"""
+        #Reinicia el controlador PID
         self._integral = 0.0
         self._last_error = 0.0
         self._last_time = None
 
-class IntersectionDetector:
-    """Detector de intersecciones integrado"""
-    def __init__(self):
-        self.min_line_length = 30
-        self.max_line_gap = 10
-        self.hough_threshold = 50
-        self.intersection_threshold = 3
-        
-    def detect_intersection(self, image) -> Tuple[Optional[Tuple[int, int]], int, np.ndarray]:
-        """
-        Detecta intersecciones en la imagen
-        Retorna: (punto_intersección, número_de_caminos, imagen_debug)
-        """
-        height, width = image.shape[:2]
-        debug_image = image.copy()
-        
-        # Convertir a escala de grises
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Aplicar filtro Gaussiano para reducir ruido
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        
-        # Binarización adaptativa para detectar líneas negras
-        binary = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_MEAN_C, 
-                                     cv2.THRESH_BINARY_INV, 11, 2)
-        
-        # Morfología para limpiar la imagen
-        kernel = np.ones((3,3), np.uint8)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-        
-        # Detectar bordes
-        edges = cv2.Canny(binary, 50, 150, apertureSize=3)
-        
-        # Detectar líneas usando transformada de Hough
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=self.hough_threshold,
-                               minLineLength=self.min_line_length, maxLineGap=self.max_line_gap)
-        
-        if lines is None:
-            return None, 0, debug_image
-        
-        # Clasificar líneas por orientación
-        horizontal_lines = []
-        vertical_lines = []
-        diagonal_lines = []
-        
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
+# ==================== FUNCIONES PARA DETECCIÓN DE INTERSECCIONES ====================
+
+def find_dots_for_intersection(frame, drawing_frame=None):
+    
+    #Detecta puntos que pueden formar líneas punteadas de intersección
+    
+    if drawing_frame is None:
+        drawing_frame = frame.copy()
+    
+    # Umbralización adaptativa para crear máscara binaria
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    mask = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                cv2.THRESH_BINARY_INV, 11, 5)
+
+    # Encontrar contornos en la máscara
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = [c for c in contours if cv2.contourArea(c) > 20]
+    dots = []
+
+    # Relación de aspecto máxima permitida
+    max_aspect_ratio = 10.0
+
+    for cnt in contours:
+        # Aproximar el contorno a un polígono
+        epsilon = 0.03 * cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, epsilon, True)
+
+        # Verificar si es un cuadrilátero convexo
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            x, y, w, h = cv2.boundingRect(approx)
+            # Filtrar formas muy alargadas
+            if min(w, h) == 0 or max(w, h) / min(w, h) > max_aspect_ratio:
+                continue
+            center = (x + w // 2, y + h // 2)
+            dots.append(center)
             
-            # Calcular ángulo
-            angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-            angle = abs(angle)
-            
-            if angle < 20 or angle > 160:  # Líneas horizontales
-                horizontal_lines.append(line[0])
-            elif 70 < angle < 110:  # Líneas verticales
-                vertical_lines.append(line[0])
-            else:  # Líneas diagonales
-                diagonal_lines.append(line[0])
+            # Dibujar puntos detectados
+            if drawing_frame is not None:
+                cv2.circle(drawing_frame, center, 3, (0, 0, 255), -1)
+
+    return dots
+
+def cluster_collinear_points(dots, min_points=4, threshold=8, outlier_factor=8.0):
+    
+    #Agrupa puntos que son aproximadamente colineales
+
+    remaining = dots.copy()
+    groups = []
+
+    while len(remaining) >= min_points:
+        best_group = []
         
-        # Dibujar líneas en imagen de debug
-        for line in horizontal_lines:
-            cv2.line(debug_image, (line[0], line[1]), (line[2], line[3]), (0, 255, 0), 2)
-        for line in vertical_lines:
-            cv2.line(debug_image, (line[0], line[1]), (line[2], line[3]), (255, 0, 0), 2)
-        for line in diagonal_lines:
-            cv2.line(debug_image, (line[0], line[1]), (line[2], line[3]), (0, 0, 255), 2)
-        
-        # Encontrar intersecciones
-        intersections = self._find_intersections(horizontal_lines, vertical_lines, diagonal_lines)
-        
-        if not intersections:
-            return None, 0, debug_image
-        
-        # Filtrar intersecciones por proximidad al centro de la imagen
-        center_x, center_y = width // 2, height // 2
-        closest_intersection = min(intersections, 
-                                 key=lambda p: (p[0] - center_x)**2 + (p[1] - center_y)**2)
-        
-        # Contar caminos disponibles en la intersección
-        num_paths = self._count_available_paths(closest_intersection, horizontal_lines, 
-                                             vertical_lines, diagonal_lines)
-        
-        # Dibujar intersección en imagen de debug
-        cv2.circle(debug_image, closest_intersection, 10, (255, 255, 0), -1)
-        cv2.putText(debug_image, f'Paths: {num_paths}', 
-                   (closest_intersection[0] + 15, closest_intersection[1]), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-        
-        # Solo considerar como intersección si hay suficientes caminos
-        if num_paths >= self.intersection_threshold:
-            return closest_intersection, num_paths, debug_image
+        # Probar cada par como línea candidata
+        for i in range(len(remaining)):
+            for j in range(i+1, len(remaining)):
+                p1 = remaining[i]
+                p2 = remaining[j]
+                
+                # Calcular parámetros de línea
+                if p2[0] - p1[0] == 0:
+                    a, b, c = 1, 0, -p1[0]
+                    direction = (0, 1)
+                else:
+                    slope = (p2[1] - p1[1]) / (p2[0] - p1[0])
+                    a, b, c = -slope, 1, -((-slope) * p1[0] + 1 * p1[1])
+                    dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+                    L = math.hypot(dx, dy)
+                    direction = (dx / L, dy / L)
+
+                # Encontrar puntos cerca de esta línea
+                candidate_group = []
+                for p in remaining:
+                    dist = abs(a * p[0] + b * p[1] + c) / math.sqrt(a**2 + b**2)
+                    if dist < threshold:
+                        candidate_group.append(p)
+
+                # Filtrar outliers
+                if len(candidate_group) >= 2:
+                    projections = [((pt[0] * direction[0] + pt[1] * direction[1]), pt)
+                                 for pt in candidate_group]
+                    projections.sort(key=lambda x: x[0])
+                    
+                    proj_values = [proj for proj, _ in projections]
+                    if len(proj_values) > 1:
+                        avg_gap = (proj_values[-1] - proj_values[0]) / (len(proj_values) - 1)
+                    else:
+                        avg_gap = 0
+
+                    filtered = []
+                    for idx, (proj, pt) in enumerate(projections):
+                        if idx == 0:
+                            gap = proj_values[1] - proj if len(proj_values) > 1 else 0
+                        elif idx == len(proj_values) - 1:
+                            gap = proj - proj_values[idx - 1]
+                        else:
+                            gap = min(proj - proj_values[idx - 1], proj_values[idx + 1] - proj)
+                        
+                        if gap <= outlier_factor * avg_gap or avg_gap == 0:
+                            filtered.append(pt)
+                    candidate_group = filtered
+
+                if len(candidate_group) > len(best_group):
+                    best_group = candidate_group
+
+        if len(best_group) >= min_points:
+            groups.append(best_group)
+            remaining = [p for p in remaining if p not in best_group]
         else:
-            return None, num_paths, debug_image
-    
-    def _find_intersections(self, h_lines, v_lines, d_lines):
-        """Encuentra puntos de intersección entre líneas"""
-        intersections = []
-        all_lines = h_lines + v_lines + d_lines
-        
-        for i in range(len(all_lines)):
-            for j in range(i + 1, len(all_lines)):
-                intersection = self._line_intersection(all_lines[i], all_lines[j])
-                if intersection:
-                    intersections.append(intersection)
-        
-        # Eliminar intersecciones duplicadas (muy cercanas)
-        filtered_intersections = []
-        for point in intersections:
-            is_duplicate = False
-            for existing in filtered_intersections:
-                if np.sqrt((point[0] - existing[0])**2 + (point[1] - existing[1])**2) < 20:
-                    is_duplicate = True
-                    break
-            if not is_duplicate:
-                filtered_intersections.append(point)
-        
-        return filtered_intersections
-    
-    def _line_intersection(self, line1, line2):
-        """Calcula la intersección entre dos líneas"""
-        x1, y1, x2, y2 = line1
-        x3, y3, x4, y4 = line2
-        
-        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if abs(denom) < 1e-10:
-            return None
-        
-        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
-        u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom
-        
-        if 0 <= t <= 1 and 0 <= u <= 1:
-            x = x1 + t * (x2 - x1)
-            y = y1 + t * (y2 - y1)
-            return (int(x), int(y))
-        
-        return None
-    
-    def _count_available_paths(self, intersection, h_lines, v_lines, d_lines):
-        """Cuenta el número de caminos disponibles desde una intersección"""
-        x, y = intersection
-        radius = 30  # Radio para buscar líneas cercanas
-        
-        paths = 0
-        
-        # Verificar líneas horizontales (izquierda y derecha)
-        for line in h_lines:
-            if self._point_near_line((x, y), line, radius):
-                paths += 1
-                break
-        
-        # Verificar líneas verticales (arriba y abajo)
-        for line in v_lines:
-            if self._point_near_line((x, y), line, radius):
-                paths += 1
-                break
-        
-        # Verificar líneas diagonales
-        diagonal_count = 0
-        for line in d_lines:
-            if self._point_near_line((x, y), line, radius):
-                diagonal_count += 1
-        
-        paths += min(diagonal_count, 2)  # Máximo 2 diagonales
-        
-        return paths
-    
-    def _point_near_line(self, point, line, threshold):
-        """Verifica si un punto está cerca de una línea"""
-        x0, y0 = point
-        x1, y1, x2, y2 = line
-        
-        # Distancia de punto a línea
-        A = y2 - y1
-        B = x1 - x2
-        C = x2 * y1 - x1 * y2
-        
-        distance = abs(A * x0 + B * y0 + C) / np.sqrt(A**2 + B**2)
-        
-        return distance < threshold
+            break
 
-class LineFollowerNode(Node):
+    return groups
+
+def find_line_endpoints(points):
+    #Encuentra los extremos de una línea formada por puntos
+    if len(points) < 2:
+        return None, None
+    
+    max_distance = 0
+    endpoint1, endpoint2 = None, None
+    
+    for i in range(len(points)):
+        for j in range(i+1, len(points)):
+            d = math.hypot(points[j][0] - points[i][0], points[j][1] - points[i][1])
+            if d > max_distance:
+                max_distance = d
+                endpoint1, endpoint2 = points[i], points[j]
+    
+    return endpoint1, endpoint2
+
+def get_dotted_lines(frame, drawing_frame=None):
+
+    #Detecta líneas punteadas agrupando puntos colineales
+    
+    if drawing_frame is None:
+        drawing_frame = frame.copy()
+        
+    dots = find_dots_for_intersection(frame, drawing_frame)
+    groups = cluster_collinear_points(dots)
+    dotted_lines = []
+    
+    for group in groups:
+        endpoints = find_line_endpoints(group)
+        if endpoints[0] is not None and endpoints[1] is not None:
+            dotted_lines.append(endpoints)
+
+    # Dibujar líneas detectadas
+    if drawing_frame is not None:
+        for line in dotted_lines:
+            cv2.line(drawing_frame, line[0], line[1], (255, 0, 0), 2)
+
+    return dotted_lines
+
+def identify_intersection(frame, drawing_frame=None):
+    
+    #Identifica una intersección y clasifica las direcciones
+    #Retorna: [back, left, right, front] donde cada elemento es None o (line, center, angle)
+    
+    if drawing_frame is None:
+        drawing_frame = frame.copy()
+
+    dotted_lines = get_dotted_lines(frame, drawing_frame)
+    
+    if not dotted_lines:
+        return [None, None, None, None]
+    
+    # Calcular centros y ángulos de las líneas
+    centers = [((l[0][0] + l[1][0]) // 2, (l[0][1] + l[1][1]) // 2) for l in dotted_lines]
+    angles = [((math.degrees(math.atan2(l[1][1] - l[0][1], l[1][0] - l[0][0])) + 90) % 180) - 90 for l in dotted_lines]
+    dotted_lines_info = list(zip(dotted_lines, centers, angles))
+    
+    # Clasificar líneas por orientación
+    vert_threshold = 30
+    verticals = [dl for dl in dotted_lines_info if abs(dl[2]) > vert_threshold]
+    horizontals = [dl for dl in dotted_lines_info if abs(dl[2]) <= vert_threshold]
+
+    # Identificar direcciones
+    frame_height, frame_width = frame.shape[:2]
+    mid_x = frame_width / 2
+    
+    # Líneas horizontales (back/front)
+    horizontal_candidates = [h for h in horizontals if h[1][1] / frame_height >= 0.3]
+    horizontal_sorted = sorted(horizontal_candidates, key=lambda x: x[1][1], reverse=True)
+    
+    back = horizontal_sorted[0] if horizontal_sorted else None
+    front = horizontal_sorted[1] if len(horizontal_sorted) > 1 else None
+    
+    # Líneas verticales (left/right)
+    left_candidates = [v for v in verticals if v[1][0] < mid_x]
+    left = sorted(left_candidates, key=lambda x: x[1][0], reverse=True)[0] if left_candidates else None
+    
+    right_candidates = [v for v in verticals if v[1][0] > mid_x]
+    right = sorted(right_candidates, key=lambda x: x[1][0])[0] if right_candidates else None
+    
+    # Verificar si back/front están en orden correcto
+    all_sorted = sorted(dotted_lines_info, key=lambda x: x[1][1], reverse=True)
+    if back and all_sorted and back != all_sorted[0]:
+        front = back
+        back = None
+
+    directions = [back, left, right, front]
+    
+    # Dibujar indicadores de dirección
+    if drawing_frame is not None:
+        direction_names = ['BACK', 'LEFT', 'RIGHT', 'FRONT']
+        colors = [(255, 255, 0), (0, 255, 255), (255, 0, 255), (0, 255, 0)]
+        
+        for i, (name, direction) in enumerate(zip(direction_names, directions)):
+            color = colors[i] if direction is not None else (128, 128, 128)
+            cv2.putText(drawing_frame, f"{name}: {'YES' if direction else 'NO'}", 
+                       (10, 30 + i*25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        
+        # Dibujar triángulos para direcciones detectadas
+        for dl in filter(None, directions):
+            line, center, angle = dl
+            angle_rad = math.radians(angle * 1.5 + (90 if dl == back else -90 if dl == front else 0))
+            h = 30
+            pt1 = (int(center[0] + h * math.cos(angle_rad + 0.3)), 
+                   int(center[1] + h * math.sin(angle_rad + 0.3)))
+            pt2 = (int(center[0] + h * math.cos(angle_rad - 0.3)), 
+                   int(center[1] + h * math.sin(angle_rad - 0.3)))
+            cv2.fillPoly(drawing_frame, [np.array([center, pt1, pt2], np.int32)], (0, 255, 0))
+    
+    return directions
+
+class LineFollowerWithIntersectionNode(Node):
     def __init__(self):
-        super().__init__('line_follower_node')
-
-        # Configuración de parámetros
-        self.declare_parameter('intersection_detection', True)
-        self.declare_parameter('decision_strategy', 'straight_priority')  # straight_priority, left_priority, right_priority
-        self.declare_parameter('intersection_pause_time', 1.0)  # Tiempo de pausa en intersección
-        self.declare_parameter('debug_mode', True)
-        
-        self.intersection_detection_enabled = self.get_parameter('intersection_detection').value
-        self.decision_strategy = self.get_parameter('decision_strategy').value
-        self.intersection_pause_time = self.get_parameter('intersection_pause_time').value
-        self.debug_mode = self.get_parameter('debug_mode').value
+        super().__init__('line_follower_intersection_node')
 
         self.bridge = CvBridge()
-        
-        # Publishers
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel_safe', 10)
-        self.debug_pub = self.create_publisher(Image, '/debug_image', 10)
-        self.intersection_pub = self.create_publisher(Point, '/intersection_point', 10)
-        self.intersection_detected_pub = self.create_publisher(Bool, '/intersection_detected', 10)
-        self.num_paths_pub = self.create_publisher(Int32, '/num_available_paths', 10)
-        self.robot_state_pub = self.create_publisher(String, '/robot_state', 10)
-        
-        # Subscribers
         self.image_sub = self.create_subscription(Image, '/image_raw', self.image_callback, 10)
+        self.debug_pub = self.create_publisher(Image, '/debug_image', 10)
 
-        # Control parameters
+        # Parámetros del seguidor de líneas (mantener los que funcionan)
         self.max_yaw = math.radians(60)
         self.max_thr = 0.2
         self.align_thres = 0.3
@@ -308,23 +319,27 @@ class LineFollowerNode(Node):
         self.last_yaw = 0.0
         self.last_thr = 0.05
         
-        # Para corregir sesgo al salir de curvas
+        # Para corrección de sesgo
         self.last_angle = 0.0
         self.transition_frames = 0
         self.straight_counter = 0
 
-        # Estado del robot y detector de intersecciones
-        self.robot_state = RobotState.FOLLOWING_LINE
-        self.intersection_detector = IntersectionDetector()
-        self.intersection_timer = None
-        self.current_intersection_point = None
-        self.current_num_paths = 0
-        self.turn_direction = TurnDirection.STRAIGHT
-        self.intersection_pause_start = None
+        # ============ NUEVOS PARÁMETROS PARA INTERSECCIONES ============
+        # PIDs para control de intersección
+        self.intersection_yaw_pid = SimplePID(Kp=1.5, Ki=0.0, Kd=0.1, setpoint=0.0, 
+                                            output_limits=(-math.radians(30), math.radians(30)))
+        self.intersection_speed_pid = SimplePID(Kp=0.3, Ki=0.0, Kd=0.05, setpoint=0.7, 
+                                              output_limits=(-0.15, 0.15))
         
-        # Historial para evitar oscilaciones en intersecciones
-        self.intersection_detected_frames = 0
-        self.min_intersection_frames = 5  # Mínimo de frames consecutivos para confirmar intersección
+        # Estados de navegación
+        self.intersection_detected = False
+        self.intersection_confidence = 0
+        self.min_confidence = 3  # Frames consecutivos para confirmar intersección
+        self.last_intersection = None
+        self.intersection_timeout = 0
+        
+        # Modo de operación
+        self.mode = "FOLLOWING"  # "FOLLOWING" o "INTERSECTION"
 
         self.get_logger().info("Line follower with intersection detection initialized")
 
@@ -381,227 +396,246 @@ class LineFollowerNode(Node):
             return best
         return None
 
-    def decide_turn_direction(self, num_paths: int) -> TurnDirection:
-        """Decide la dirección a tomar en una intersección"""
-        if self.decision_strategy == 'straight_priority':
-            return TurnDirection.STRAIGHT
-        elif self.decision_strategy == 'left_priority':
-            return TurnDirection.LEFT
-        elif self.decision_strategy == 'right_priority':
-            return TurnDirection.RIGHT
-        else:
-            # Estrategia aleatoria o por defecto
-            return TurnDirection.STRAIGHT
-
-    def execute_turn(self, direction: TurnDirection) -> Tuple[float, float]:
-        """Ejecuta un giro específico"""
-        if direction == TurnDirection.LEFT:
-            return 0.1, math.radians(30)  # Velocidad lenta, giro izquierda
-        elif direction == TurnDirection.RIGHT:
-            return 0.1, math.radians(-30)  # Velocidad lenta, giro derecha
-        else:  # STRAIGHT
-            return 0.15, 0.0  # Seguir recto
-
     def follow_line(self, frame, drawing_frame=None):
+        #Función original de seguimiento de líneas (sin cambios)
+        line = self.get_middle_line(frame, drawing_frame)
         throttle, yaw = 0.0, 0.0
         frame_height, frame_width = frame.shape[:2]
 
-        # Detectar intersecciones si está habilitado
-        intersection_point = None
-        num_paths = 0
-        if self.intersection_detection_enabled:
-            intersection_point, num_paths, intersection_debug = self.intersection_detector.detect_intersection(frame)
+        if line:
+            contour, (pt1, pt2, angle, cx, cy, length) = line
+            x, y, w, h = cv2.boundingRect(contour)
             
-            # Superponer información de intersección en el frame de debug
-            if drawing_frame is not None and intersection_debug is not None:
-                # Combinar las imágenes de debug
-                alpha = 0.7
-                cv2.addWeighted(drawing_frame, alpha, intersection_debug, 1-alpha, 0, drawing_frame)
-
-        # Lógica de estado del robot
-        if intersection_point and self.robot_state == RobotState.FOLLOWING_LINE:
-            self.intersection_detected_frames += 1
-            if self.intersection_detected_frames >= self.min_intersection_frames:
-                self.robot_state = RobotState.INTERSECTION_DETECTED
-                self.current_intersection_point = intersection_point
-                self.current_num_paths = num_paths
-                self.turn_direction = self.decide_turn_direction(num_paths)
-                self.intersection_pause_start = time.time()
-                self.get_logger().info(f'Intersección detectada con {num_paths} caminos. Decisión: {self.turn_direction.name}')
-        elif not intersection_point:
-            self.intersection_detected_frames = 0
-            if self.robot_state == RobotState.INTERSECTION_DETECTED:
-                self.robot_state = RobotState.FOLLOWING_LINE
-
-        # Publicar información de intersección
-        if intersection_point:
-            point_msg = Point()
-            point_msg.x = float(intersection_point[0])
-            point_msg.y = float(intersection_point[1])
-            point_msg.z = 0.0
-            self.intersection_pub.publish(point_msg)
-
-        bool_msg = Bool()
-        bool_msg.data = (intersection_point is not None)
-        self.intersection_detected_pub.publish(bool_msg)
-
-        paths_msg = Int32()
-        paths_msg.data = num_paths
-        self.num_paths_pub.publish(paths_msg)
-
-        state_msg = String()
-        state_msg.data = self.robot_state.name
-        self.robot_state_pub.publish(state_msg)
-
-        # Comportamiento según el estado
-        if self.robot_state == RobotState.INTERSECTION_DETECTED:
-            # Pausa en la intersección antes de decidir
-            if time.time() - self.intersection_pause_start < self.intersection_pause_time:
-                throttle, yaw = 0.05, 0.0  # Moverse muy lentamente
-                if drawing_frame is not None:
-                    cv2.putText(drawing_frame, f"INTERSECTION: {self.turn_direction.name}", 
-                               (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
+            # Detectar transición y mantener contador de rectas
+            is_straight = abs(angle) < 10
+            was_curve = abs(self.last_angle) >= 15
+            is_transition = is_straight and was_curve
+            
+            if is_straight:
+                self.straight_counter += 1
             else:
-                # Ejecutar el giro decidido
-                self.robot_state = RobotState.TURNING
+                self.straight_counter = 0
+            
+            if is_transition:
+                self.transition_frames = 12
+                self.yaw_pid.reset()
+                self.yaw_pid._integral = 0.0
+            
+            # Para rectas, usar múltiples métodos de cálculo
+            if is_straight:
+                roi_height = int(frame_height * 0.25)
+                roi_y_start = frame_height - roi_height
                 
-        elif self.robot_state == RobotState.TURNING:
-            # Ejecutar giro por un tiempo limitado
-            throttle, yaw = self.execute_turn(self.turn_direction)
+                contour_roi = []
+                for point in contour:
+                    if point[0][1] >= roi_y_start:
+                        contour_roi.append(point)
+                
+                center_x_roi = x + w // 2
+                if len(contour_roi) > 10:
+                    contour_roi = np.array(contour_roi)
+                    M_roi = cv2.moments(contour_roi)
+                    if M_roi["m00"] != 0:
+                        center_x_roi = int(M_roi["m10"] / M_roi["m00"])
+                
+                M_full = cv2.moments(contour)
+                center_x_full = x + w // 2
+                if M_full["m00"] != 0:
+                    center_x_full = int(M_full["m10"] / M_full["m00"])
+                
+                center_x = int(0.7 * center_x_roi + 0.3 * center_x_full)
+            else:
+                center_x = x + w // 2
+            
+            normalized_x = (center_x - (frame_width / 2)) / (frame_width / 2)
+            
+            # Compensación súper agresiva
+            if self.transition_frames > 0:
+                if self.transition_frames > 8:
+                    strength = 0.25
+                elif self.transition_frames > 4:
+                    strength = 0.15
+                else:
+                    strength = 0.08
+                    
+                bias_correction = -strength
+                normalized_x += bias_correction
+                self.transition_frames -= 1
+                
+                if drawing_frame is not None:
+                    cv2.putText(drawing_frame, f"STRONG CORRECTION: {strength:.3f}", (10, 200), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+            
+            elif is_straight and self.straight_counter > 2:
+                continuous_correction = -0.04
+                normalized_x += continuous_correction
+                
+                if drawing_frame is not None:
+                    cv2.putText(drawing_frame, "CONTINUOUS CORRECTION", (10, 200), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            
+            if is_straight and abs(normalized_x) < 0.015:
+                normalized_x = 0.0
+            
+            yaw = self.yaw_pid(normalized_x)
+            self.last_angle = angle
+
+            alignment = 1 - abs(normalized_x)
+            x = ((alignment - self.align_thres) / (1 - self.align_thres))
+            throttle = self.max_thr * x
+
+            self.last_yaw = yaw
+            self.last_thr = throttle
+
             if drawing_frame is not None:
-                cv2.putText(drawing_frame, f"TURNING: {self.turn_direction.name}", 
-                           (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-            
-            # Volver al seguimiento normal después de un tiempo
-            if time.time() - self.intersection_pause_start > self.intersection_pause_time + 2.0:
-                self.robot_state = RobotState.FOLLOWING_LINE
-                self.yaw_pid.reset()  # Reset PID para estabilizar
-                
-        else:  # FOLLOWING_LINE
-            # Seguimiento normal de línea (código original)
-            line = self.get_middle_line(frame, drawing_frame)
-
-            if line:
-                contour, (pt1, pt2, angle, cx, cy, length) = line
-                x, y, w, h = cv2.boundingRect(contour)
-                
-                # Corrección para sesgo (código original)
-                is_straight = abs(angle) < 10
-                was_curve = abs(self.last_angle) >= 15
-                is_transition = is_straight and was_curve
-                
-                if is_straight:
-                    self.straight_counter += 1
-                else:
-                    self.straight_counter = 0
-                
-                if is_transition:
-                    self.transition_frames = 12
-                    self.yaw_pid.reset()
-                    self.yaw_pid._integral = 0.0
-                
-                if is_straight:
-                    # Método mejorado para rectas
-                    roi_height = int(frame_height * 0.25)
-                    roi_y_start = frame_height - roi_height
-                    
-                    contour_roi = []
-                    for point in contour:
-                        if point[0][1] >= roi_y_start:
-                            contour_roi.append(point)
-                    
-                    center_x_roi = x + w // 2
-                    if len(contour_roi) > 10:
-                        contour_roi = np.array(contour_roi)
-                        M_roi = cv2.moments(contour_roi)
-                        if M_roi["m00"] != 0:
-                            center_x_roi = int(M_roi["m10"] / M_roi["m00"])
-                    
-                    M_full = cv2.moments(contour)
-                    center_x_full = x + w // 2
-                    if M_full["m00"] != 0:
-                        center_x_full = int(M_full["m10"] / M_full["m00"])
-                    
-                    center_x = int(0.7 * center_x_roi + 0.3 * center_x_full)
-                    
-                else:
-                    center_x = x + w // 2
-                
-                normalized_x = (center_x - (frame_width / 2)) / (frame_width / 2)
-                
-                # Correcciones de sesgo
-                if self.transition_frames > 0:
-                    if self.transition_frames > 8:
-                        strength = 0.25
-                    elif self.transition_frames > 4:
-                        strength = 0.15
-                    else:
-                        strength = 0.08
-                        
-                    bias_correction = -strength
-                    normalized_x += bias_correction
-                    self.transition_frames -= 1
-                    
-                    if drawing_frame is not None:
-                        cv2.putText(drawing_frame, f"STRONG CORRECTION: {strength:.3f}", (10, 150), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-                
-                elif is_straight and self.straight_counter > 2:
-                    continuous_correction = -0.04
-                    normalized_x += continuous_correction
-                    
-                    if drawing_frame is not None:
-                        cv2.putText(drawing_frame, "CONTINUOUS CORRECTION", (10, 150), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                
-                if is_straight and abs(normalized_x) < 0.015:
-                    normalized_x = 0.0
-                
-                yaw = self.yaw_pid(normalized_x)
-                self.last_angle = angle
-
-                alignment = 1 - abs(normalized_x)
-                x = ((alignment - self.align_thres) / (1 - self.align_thres))
-                throttle = self.max_thr * x
-
-                self.last_yaw = yaw
-                self.last_thr = throttle
-
-                if drawing_frame is not None:
-                    cv2.line(drawing_frame, (center_x, 0), (center_x, frame_height), (255, 0, 0), 2)
-                    cv2.line(drawing_frame, (frame_width//2, 0), (frame_width//2, frame_height), (0, 255, 255), 1)
-                    cv2.putText(drawing_frame, f"v: {throttle:.2f} m/s", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    cv2.putText(drawing_frame, f"w: {math.degrees(yaw):.2f} deg/s", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    cv2.putText(drawing_frame, f"straight_cnt: {self.straight_counter}", (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            else:
-                yaw = self.last_yaw
-                throttle = 0.05
-                if drawing_frame is not None:
-                    cv2.putText(drawing_frame, "Fallback mode (no line)", (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                cv2.line(drawing_frame, (center_x, 0), (center_x, frame_height), (255, 0, 0), 2)
+                cv2.line(drawing_frame, (frame_width//2, 0), (frame_width//2, frame_height), (0, 255, 255), 1)
+        else:
+            yaw = self.last_yaw
+            throttle = 0.05
 
         return throttle, yaw
 
+    def stop_at_intersection(self, frame, intersection, drawing_frame=None):
+        
+        #Control PID para detenerse y alinearse en intersección
+        
+        back, left, right, front = intersection
+        throttle, yaw = 0.0, 0.0
+        frame_height, frame_width = frame.shape[:2]
+        
+        # Usar línea trasera o frontal para alineación
+        reference_line = back if back else front
+        
+        if reference_line:
+            line, center, angle = reference_line
+            
+            # Control de orientación (yaw)
+            angle_error = math.radians(angle)
+            yaw = self.intersection_yaw_pid(angle_error)
+            
+            # Control de velocidad basado en distancia y alineación
+            yaw_threshold_deg = 5.0
+            alignment_factor = 1 - (abs(angle) / yaw_threshold_deg) if abs(angle) < yaw_threshold_deg else 0
+            
+            # Distancia normalizada (0 = cerca del borde inferior, 1 = cerca del borde superior)
+            norm_distance = center[1] / frame_height
+            target_distance = 0.7  # Detenerse cuando la línea esté al 70% de la imagen
+            
+            # Combinar distancia y alineación para velocidad
+            measured_value = alignment_factor * norm_distance + (1 - alignment_factor) * target_distance
+            throttle = self.intersection_speed_pid(measured_value)
+            
+            if drawing_frame is not None:
+                cv2.putText(drawing_frame, f"Intersection angle: {angle:.1f}°", (10, 220), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                cv2.putText(drawing_frame, f"Alignment: {alignment_factor:.2f}", (10, 240), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        
+        return throttle, yaw
+
     def image_callback(self, msg):
-        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        debug = frame.copy()
-        v, w = self.follow_line(frame, drawing_frame=debug)
-
-        twist = Twist()
-        twist.linear.x = v
-        twist.angular.z = w
-        self.cmd_pub.publish(twist)
-
-        if self.debug_mode:
+        #Callback principal con detección de intersecciones
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            debug = frame.copy()
+            
+            # ============ DETECCIÓN DE INTERSECCIONES ============
+            intersection = identify_intersection(frame, drawing_frame=debug)
+            back, left, right, front = intersection
+            
+            # Contar direcciones válidas
+            valid_directions = [d for d in intersection if d is not None]
+            intersection_detected = len(valid_directions) >= 2
+            
+            # Sistema de confianza para evitar falsos positivos
+            if intersection_detected:
+                self.intersection_confidence = min(self.intersection_confidence + 1, self.min_confidence + 2)
+                self.last_intersection = intersection
+            else:
+                self.intersection_confidence = max(self.intersection_confidence - 1, 0)
+            
+            # Determinar modo de operación
+            if self.intersection_confidence >= self.min_confidence:
+                self.mode = "INTERSECTION"
+                self.intersection_timeout = 30  # Frames para permanecer en modo intersección
+            elif self.intersection_timeout > 0:
+                self.mode = "INTERSECTION"
+                self.intersection_timeout -= 1
+            else:
+                self.mode = "FOLLOWING"
+                # Reset PIDs cuando cambiamos a modo seguimiento
+                if hasattr(self, '_last_mode') and self._last_mode == "INTERSECTION":
+                    self.yaw_pid.reset()
+            
+            # ============ CONTROL SEGÚN EL MODO ============
+            if self.mode == "INTERSECTION":
+                v, w = self.stop_at_intersection(frame, self.last_intersection, drawing_frame=debug)
+                
+                # Información de debug para intersección
+                cv2.putText(debug, "INTERSECTION MODE", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                cv2.putText(debug, f"Confidence: {self.intersection_confidence}/{self.min_confidence}", (10, 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                cv2.putText(debug, f"Directions: {len(valid_directions)}", (10, 90), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                cv2.putText(debug, f"Timeout: {self.intersection_timeout}", (10, 120), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                
+            else:  # FOLLOWING mode
+                v, w = self.follow_line(frame, drawing_frame=debug)
+                
+                # Información de debug para seguimiento
+                cv2.putText(debug, "LINE FOLLOWING MODE", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(debug, f"v: {v:.2f} m/s", (10, 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(debug, f"w: {math.degrees(w):.1f}°/s", (10, 90), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(debug, f"straight_cnt: {self.straight_counter}", (10, 120), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # Guardar modo anterior
+            self._last_mode = self.mode
+            
+            # ============ PUBLICAR COMANDOS ============
+            twist = Twist()
+            twist.linear.x = float(v)
+            twist.angular.z = float(w)
+            self.cmd_pub.publish(twist)
+            
+            # Publicar imagen de debug
             debug_msg = self.bridge.cv2_to_imgmsg(debug, encoding='bgr8')
             self.debug_pub.publish(debug_msg)
+            
+            # Log de estado
+            if self.mode == "INTERSECTION":
+                self.get_logger().info(f"INTERSECTION: v={v:.3f}, w={math.degrees(w):.1f}°/s, "
+                                     f"dirs={len(valid_directions)}, conf={self.intersection_confidence}")
+            
+        except Exception as e:
+            self.get_logger().error(f"Error in image processing: {str(e)}")
+            # En caso de error, mantener último comando seguro
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            self.cmd_pub.publish(twist)
 
 def main(args=None):
     rclpy.init(args=args)
-    node = LineFollowerNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    node = LineFollowerWithIntersectionNode()
+    
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
+
+
+
+

@@ -20,6 +20,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'detect_traffic_signs = traffic_signs_dataset.detect_traffic_signs:main',
+            'line_intersect_signs = traffic_signs_dataset.line_intersect_signs:main',
+            'line_intersect_traffic_signs = traffic_signs_dataset.line_intersect_traffic_signs:main',
+
         ],
     },
 )

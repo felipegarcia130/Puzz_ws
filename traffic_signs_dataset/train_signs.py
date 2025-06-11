@@ -1,14 +1,14 @@
 from ultralytics import YOLO
 
-# Carga del modelo base (tiny)
+# Modelo más ligero
 model = YOLO("yolov8n.pt")
 
-# Entrenamiento
+# Entrenamiento optimizado para tu GPU
 model.train(
-    data="data/data.yaml",   # Ruta relativa dentro del paquete
+    data="/home/felipe/Descargas/TrafficSignsLights.v1i.yolov8/data.yaml",
     epochs=50,
-    imgsz=640,
-    batch=8,
-    name="traffic_signs_v8",
-    project="runs/train"
+    imgsz=416,
+    batch=4,
+    name="senales_trafico_v1",
+    device=0  # usa GPU si no se llena
 )

@@ -70,7 +70,7 @@ class SimplePID:
         return output
     
     def reset(self):
-        """Reinicia el controlador PID"""
+        #Reinicia el controlador PID
         self._integral = 0.0
         self._last_error = 0.0
         self._last_time = None
@@ -292,3 +292,5 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
