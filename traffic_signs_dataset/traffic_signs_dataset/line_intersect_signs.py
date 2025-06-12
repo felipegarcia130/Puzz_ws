@@ -973,7 +973,7 @@ class LineFollowerWithYOLONode(Node):
         
         self.intersection_detector_advanced = IntersectionDetectorAdvanced(
             v_fov=0.6,
-            min_points=4
+            min_points=6
         )
         
         # Agregar atributo authority al line follower

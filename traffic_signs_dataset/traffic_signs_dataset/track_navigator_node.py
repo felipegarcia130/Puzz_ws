@@ -88,7 +88,7 @@ class TrackNavigator:
         # Estados de la máquina de estados
         self.state = "FOLLOWING"  # FOLLOWING, INTERSECTION_DETECTED, CROSSING, TURNING, RESUMING
         self.intersection_confidence = 0
-        self.min_confidence = 3
+        self.min_confidence = 5
         
         # Variables para manejo de intersecciones
         self.turn_command = None  # Dirección a tomar (LEFT, RIGHT, FORWARD, BACK)

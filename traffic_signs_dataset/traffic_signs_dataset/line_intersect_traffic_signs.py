@@ -952,49 +952,54 @@ class TrackNavigator:
         self.id = intersection_detector
         self.stl_det = stoplight_detector
         self.fd = flag_detector
-        self.current_light = -1  # -1: desconocido, 0: rojo, 1: amarillo, 2: verde
+        self.current_light = -1
 
         self.end_action = end_action
         self.ongoing_end_action = ongoing_end_action
-        # Static variables
+        
+        # Variables de estado mejoradas
         self.last_signs: list[Sign] = []
         self.last_turn_sign: Sign = None
         self.yielding = False
         self.poll = True
-        self.turn_age = 5  # seconds
+        self.turn_age = 5
         self.stopping = False
         self.stop_time = None
-        self.stop_duration = 2.0  # segundos detenido
-        # Estados de la máquina de estados
-        self.state = "FOLLOWING"  # FOLLOWING, INTERSECTION_DETECTED, CROSSING, TURNING, RESUMING
+        self.stop_duration = 2.0
+        
+        # Estados de la máquina de estados - SIMPLIFICADOS
+        self.state = "FOLLOWING"
         self.intersection_confidence = 0
-        self.min_confidence = 3
+        self.min_confidence = 8  # Aumentado para mayor estabilidad
+        self.max_confidence = 12  # Límite máximo
         
-        # Variables para manejo de intersecciones
-        self.turn_command = None  # Dirección a tomar (LEFT, RIGHT, FORWARD, BACK)
-        self.crossing_timer = 0
-        self.turning_timer = 0
-        self.resuming_timer = 0
+        # Variables para manejo de intersecciones - SIMPLIFICADAS
+        self.turn_command = None
+        self.state_timer = 0  # Timer unificado
         
-        # Configuración de tiempos (en frames/ciclos)
-        self.crossing_duration = 28    # Tiempo para cruzar la intersección (1 segundo a 30fps)
-        self.turning_duration = 30     # Tiempo para hacer el giro (1.5 segundos)
-        self.resuming_duration = 15    # Tiempo para estabilizarse (0.5 segundos)
-        self.pending_action = None
-        self.just_crossed_intersection = False
-        self.cross_complete_time = None
-        self.intersection_detected = False
-        self.poll = True
-        self.last_stoplight = None
+        # Configuración de tiempos (más conservadores)
+        self.approach_duration = 45   # Tiempo de aproximación (1.5s)
+        self.crossing_duration = 60   # Tiempo para cruzar (2s)
+        self.turning_duration = 45    # Tiempo para girar (1.5s)
+        self.settling_duration = 30   # Tiempo de estabilización (1s)
+        
+        # Variables de control mejoradas
+        self.intersection_detected_frames = 0
+        self.min_intersection_frames = 5  # Mínimo de frames para confirmar intersección
+        self.last_intersection_center = None
+        self.intersection_distance_threshold = 0.1  # Para determinar si estamos cerca
+        
+        # Control de velocidad en intersecciones
+        self.intersection_speed = 0.08  # Velocidad reducida en intersecciones
+        self.normal_speed_restored = False
+        
         if self.lf:
             self.lf.authority = 1.0
 
-
-
     def navigate(self, frame, drawing_frame=None):
-        """Máquina de estados para navegación completa con intersecciones - VERSIÓN CORREGIDA"""
+        """Máquina de estados simplificada y más robusta"""
         
-        # --- DETECCIÓN DE BANDERA ---
+        # --- DETECCIÓN DE BANDERA (sin cambios) ---
         if self.fd:
             flag_dist = self.fd.get_flag_distance_nb(frame, drawing_frame=drawing_frame)
             if flag_dist is not None and flag_dist <= self.fd.dist_thres:
@@ -1010,43 +1015,19 @@ class TrackNavigator:
                         return ret
                 return 0.0, 0.0
 
-        # --- DETECCIÓN DE SEMÁFORO (MEJORADA Y UNIFICADA) ---
+        # --- DETECCIÓN DE SEMÁFORO ---
         self.current_light = None
-        self.last_stoplight = None
-        
         if self.stl_det:
-            # Detectar semáforo UNA SOLA VEZ por frame
             detected_light = self.stl_det.identify_stoplight(frame, drawing_frame=drawing_frame)
             self.current_light = detected_light
-            self.last_stoplight = detected_light
 
-        # 🚨 VERIFICACIÓN CRÍTICA DE SEMÁFORO ROJO - MÁXIMA PRIORIDAD
-        # Esta verificación debe ser PRIORITARIA sobre cualquier otro estado
-        if self.current_light == 0:  # ROJO DETECTADO
-            # FORZAR DETENCIÓN INMEDIATA, sin importar el estado actual
+        # 🚨 VERIFICACIÓN CRÍTICA DE SEMÁFORO ROJO
+        if self.current_light == 0:  # ROJO
             if drawing_frame is not None:
                 cv2.putText(drawing_frame, "🚨 RED LIGHT - EMERGENCY STOP", 
                         (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
-                # Dibujar rectángulo de alerta
-                cv2.rectangle(drawing_frame, (0, 240), (500, 280), (0, 0, 255), 3)
-            
-            # Log crítico
             print("🚨 CRITICAL STOP: RED LIGHT DETECTED!")
-            return 0.0, 0.0  # DETENCIÓN ABSOLUTA - NO PROCESAR MÁS ESTADOS
-
-        # Si hay luz amarilla, aplicar lógica conservadora
-        if self.current_light == 1:  # AMARILLO
-            if self.state == "INTERSECTION_DETECTED":
-                # Política conservadora: con amarillo NO cruzar
-                if drawing_frame is not None:
-                    cv2.putText(drawing_frame, "🟡 YELLOW - CONSERVATIVE STOP", 
-                            (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                print("🟡 Yellow light - stopping conservatively")
-                return 0.0, 0.0  # Detenerse por seguridad
-            else:
-                # Si no estamos en intersección, reducir velocidad significativamente
-                if hasattr(self.lf, 'authority'):
-                    self.lf.authority = 0.3
+            return 0.0, 0.0
 
         # --- MANEJO DE SEÑALES DE STOP ---
         if self.stopping:
@@ -1059,205 +1040,185 @@ class TrackNavigator:
                 self.stopping = False
                 self.stop_time = None
 
-        # --- APLICAR ACCIONES PENDIENTES POST-INTERSECCIÓN ---
-        if self.just_crossed_intersection and self.cross_complete_time is not None:
-            if time.time() > self.cross_complete_time:
-                self.just_crossed_intersection = False
-                if self.pending_action == 'STOP':
-                    self.stopping = True
-                elif self.pending_action in ['YIELD', 'SLOW']:
-                    if hasattr(self.lf, 'authority'):
-                        self.lf.authority = 0.5
-                self.pending_action = None
-
         # --- DETECCIÓN DE SEÑALES ---
         if self.sd:
             self.last_signs = self.sd.get_confirmed_signs_nb(frame, drawing_frame=drawing_frame)
-            # Actualizar comando de giro si hay señales direccionales
-            if self.last_signs:
+            # Solo actualizar comando de giro si no estamos ya procesando una intersección
+            if self.last_signs and self.state == "FOLLOWING":
                 turn_signs = [s for s in self.last_signs if 0 <= s.type.value <= 3]
                 if turn_signs:
-                    # Tomar la señal con mayor confianza
                     best_turn_sign = max(turn_signs, key=lambda s: s.confidence)
                     self.turn_command = best_turn_sign.type
                     self.last_turn_sign = best_turn_sign
+                    print(f"🎯 Nueva señal detectada: {self.turn_command.name}")
 
-        # --- DETECCIÓN DE INTERSECCIONES ---
+        # --- DETECCIÓN DE INTERSECCIONES MEJORADA ---
         intersection = None
+        intersection_detected_now = False
+        
         if self.id:
             intersection = self.id.find_intersection(frame, drawing_frame=drawing_frame)
             
-            # Sistema de confianza
             if intersection:
-                self.intersection_confidence = min(self.intersection_confidence + 1, self.min_confidence + 2)
+                line, center, angle = intersection
+                intersection_detected_now = True
+                self.last_intersection_center = center
+                self.intersection_detected_frames += 1
+                
+                # Sistema de confianza más robusto
+                if self.intersection_detected_frames >= self.min_intersection_frames:
+                    self.intersection_confidence = min(self.intersection_confidence + 1, self.max_confidence)
+                    
+                # Calcular distancia aproximada a la intersección
+                frame_height = frame.shape[0]
+                intersection_distance = center[1] / frame_height  # 0 = arriba, 1 = abajo
+                
             else:
-                self.intersection_confidence = max(self.intersection_confidence - 1, 0)
+                self.intersection_detected_frames = 0
+                self.intersection_confidence = max(self.intersection_confidence - 2, 0)
 
         # ============ MÁQUINA DE ESTADOS MEJORADA ============
         
         if self.state == "FOLLOWING":
-            # Estado normal: seguir líneas
+            # Restaurar autoridad completa
             if hasattr(self.lf, 'authority'):
-                # Restaurar authority a 1.0 si no hay restricciones de semáforo
-                if self.current_light != 1:  # Si no es amarillo
-                    self.lf.authority = 1.0
+                self.lf.authority = 1.0
             
-            # Controlar velocidad basado en señales
+            # Aplicar control de velocidad por señales
             self._apply_sign_speed_control()
             
-            # Verificar si hay intersección detectada
-            if self.intersection_confidence >= self.min_confidence and intersection:
-                if self.turn_command:  # Solo si tenemos una señal de dirección
-                    self.state = "INTERSECTION_DETECTED"
-                    if drawing_frame is not None:
-                        cv2.putText(drawing_frame, f"INTERSECTION DETECTED - WILL GO {self.turn_command.name}", 
-                                (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            # Verificar transición a intersección
+            if (self.intersection_confidence >= self.min_confidence and 
+                intersection and self.turn_command):
+                
+                print(f"🛣️ Intersección confirmada - preparando giro {self.turn_command.name}")
+                self.state = "APPROACHING_INTERSECTION"
+                self.state_timer = self.approach_duration
+                
+                if drawing_frame is not None:
+                    cv2.putText(drawing_frame, f"APPROACHING INTERSECTION - {self.turn_command.name}", 
+                            (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             
             # Seguir línea normalmente
             throttle, yaw = self._follow_line_with_authority(frame, drawing_frame)
             
-        elif self.state == "INTERSECTION_DETECTED":
-            # Detectamos intersección, prepararse para cruzar
+        elif self.state == "APPROACHING_INTERSECTION":
+            # Reducir velocidad y aproximarse cuidadosamente
             if hasattr(self.lf, 'authority'):
-                self.lf.authority = 0.8  # Reducir velocidad para aproximación
+                self.lf.authority = 0.6  # Velocidad reducida
             
-            # Alinearse con la intersección
             if intersection:
+                # Usar control PID para aproximarse suavemente
                 throttle, yaw = self.id.stop_at_intersection(frame, drawing_frame=drawing_frame, intersection=intersection)
                 
-                # 🚨 CONDICIÓN DE CRUCE MEJORADA CON VERIFICACIÓN ESTRICTA DE SEMÁFORO
-                if abs(throttle) < 0.05:  # Estamos muy cerca de la intersección
+                # Verificar si estamos lo suficientemente cerca para proceder
+                line, center, angle = intersection
+                frame_height = frame.shape[0]
+                distance_to_intersection = center[1] / frame_height
+                
+                # Si estamos muy cerca Y tenemos luz verde (o no hay semáforo), proceder
+                if distance_to_intersection > 0.75:  # Muy cerca del borde inferior
+                    can_proceed = False
                     
-                    if self.current_light == 2:  # SOLO VERDE PERMITE CRUZAR
-                        self.state = "CROSSING"
-                        self.crossing_timer = self.crossing_duration
-                        if drawing_frame is not None:
-                            cv2.putText(drawing_frame, f"🟢 GREEN - CROSSING {self.turn_command.name}", 
-                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                        print(f"🟢 Green light confirmed - starting to cross towards {self.turn_command.name}")
+                    if self.current_light == 2:  # Verde
+                        can_proceed = True
+                        print("🟢 Luz verde confirmada - procediendo")
+                    elif self.current_light is None:  # Sin semáforo
+                        can_proceed = True
+                        print("🔄 Sin semáforo detectado - procediendo")
+                    elif self.current_light == 1:  # Amarillo - ser conservativo
+                        can_proceed = False
+                        print("🟡 Luz amarilla - esperando")
                     
-                    elif self.current_light == 0:  # ROJO - MANTENER PARADO
+                    if can_proceed:
+                        self.state = "CROSSING_INTERSECTION"
+                        self.state_timer = self.crossing_duration
+                        print(f"🚦 Iniciando cruce hacia {self.turn_command.name}")
+                    else:
+                        # Mantener posición cerca de la intersección
                         throttle = 0.0
                         yaw = 0.0
-                        if drawing_frame is not None:
-                            cv2.putText(drawing_frame, "🔴 RED - MUST STOP", 
-                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 3)
-                        print("🔴 Red light - maintaining stop at intersection")
-                    
-                    elif self.current_light == 1:  # AMARILLO - NO CRUZAR
-                        throttle = 0.0
-                        yaw = 0.0
-                        if drawing_frame is not None:
-                            cv2.putText(drawing_frame, "🟡 YELLOW - SAFETY STOP", 
-                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                        print("🟡 Yellow light - safety stop at intersection")
-                    
-                    elif self.current_light is None:  # SIN SEMÁFORO DETECTADO
-                        # Ser muy conservador: esperar confirmación de que NO hay semáforo
-                        if not hasattr(self, '_no_light_counter'):
-                            self._no_light_counter = 0
-                        self._no_light_counter += 1
                         
-                        # Requiere muchos frames consecutivos sin detectar semáforo
-                        if self._no_light_counter > 15:  # 15 frames sin detectar semáforo
-                            self.state = "CROSSING"
-                            self.crossing_timer = self.crossing_duration
-                            if drawing_frame is not None:
-                                cv2.putText(drawing_frame, f"NO TRAFFIC LIGHT - CROSSING {self.turn_command.name}", 
-                                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                            print(f"No traffic light confirmed after {self._no_light_counter} frames - proceeding to cross")
-                        else:
-                            throttle = 0.0
-                            yaw = 0.0
-                            if drawing_frame is not None:
-                                cv2.putText(drawing_frame, f"WAITING FOR LIGHT CONFIRMATION {self._no_light_counter}/15", 
-                                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                            print(f"Waiting for traffic light confirmation: {self._no_light_counter}/15")
-                else:
-                    # Reset contador si no estamos cerca de la intersección
-                    if hasattr(self, '_no_light_counter'):
-                        self._no_light_counter = 0
             else:
                 # Si perdemos la intersección, volver a seguir línea
                 throttle, yaw = self._follow_line_with_authority(frame, drawing_frame)
-                
-        elif self.state == "CROSSING":
-            # Cruzar la intersección en línea recta
-            # Una vez iniciado el cruce, DEBE completarse sin revisar semáforo
-            # (es peligroso detenerse en medio de la intersección)
-            throttle = 0.15  # Velocidad constante para cruzar
-            yaw = 0.0       # Sin giro, ir derecho
-            
-            self.crossing_timer -= 1
-            if self.crossing_timer <= 0:
-                self.state = "TURNING"
-                self.turning_timer = self.turning_duration
-                if drawing_frame is not None:
-                    cv2.putText(drawing_frame, f"CROSSED - NOW TURNING {self.turn_command.name}", 
-                            (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                print(f"Intersection crossed - now turning {self.turn_command.name}")
+                # Decrementar timer para evitar quedarse atrapado
+                self.state_timer -= 1
+                if self.state_timer <= 0:
+                    print("⚠️ Timeout en aproximación - volviendo a seguimiento")
+                    self.state = "FOLLOWING"
+                    self._reset_intersection_state()
             
             if drawing_frame is not None:
-                cv2.putText(drawing_frame, f"CROSSING INTERSECTION: {self.crossing_timer}", 
-                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                
-        elif self.state == "TURNING":
-            # Ejecutar el giro según la señal
-            throttle, yaw = self._execute_turn(frame, drawing_frame)
-            
-            self.turning_timer -= 1
-
-            if self.turning_timer <= 0:
-                self.state = "RESUMING"
-                self.resuming_timer = self.resuming_duration
-                self.just_crossed_intersection = True
-                self.cross_complete_time = time.time() + 1.5  # 1.5s después del giro
-
-                if drawing_frame is not None:
-                    cv2.putText(drawing_frame, "TURN COMPLETED - RESUMING LINE FOLLOWING", 
-                            (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                print("Turn completed - resuming line following")
-            
-            if drawing_frame is not None:
-                cv2.putText(drawing_frame, f"TURNING {self.turn_command.name}: {self.turning_timer}", 
+                cv2.putText(drawing_frame, f"APPROACHING: {self.state_timer}", 
                         (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 
-        elif self.state == "RESUMING":
-            # Estabilizar y volver a seguimiento normal
-            throttle, yaw = self._follow_line_with_authority(frame, drawing_frame)
+        elif self.state == "CROSSING_INTERSECTION":
+            # Cruzar en línea recta a velocidad constante
+            throttle = self.intersection_speed
+            yaw = 0.0
             
-            self.resuming_timer -= 1
-            if self.resuming_timer <= 0:
-                self.state = "FOLLOWING"
-                self.turn_command = None  # Limpiar comando
-                self.intersection_confidence = 0  # Reset confianza
-                if hasattr(self, '_no_light_counter'):
-                    self._no_light_counter = 0  # Reset contador de confirmación
-                if drawing_frame is not None:
-                    cv2.putText(drawing_frame, "RESUMED NORMAL LINE FOLLOWING", 
-                            (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                print("Resumed normal line following")
+            self.state_timer -= 1
+            
+            if self.state_timer <= 0:
+                self.state = "EXECUTING_TURN"
+                self.state_timer = self.turning_duration
+                print(f"🔄 Iniciando giro {self.turn_command.name}")
             
             if drawing_frame is not None:
-                cv2.putText(drawing_frame, f"RESUMING: {self.resuming_timer}", 
+                cv2.putText(drawing_frame, f"CROSSING: {self.state_timer}", 
+                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+        elif self.state == "EXECUTING_TURN":
+            # Ejecutar el giro
+            throttle, yaw = self._execute_turn()
+            
+            self.state_timer -= 1
+            
+            if self.state_timer <= 0:
+                self.state = "SETTLING"
+                self.state_timer = self.settling_duration
+                print("✅ Giro completado - estabilizando")
+            
+            if drawing_frame is not None:
+                cv2.putText(drawing_frame, f"TURNING {self.turn_command.name}: {self.state_timer}", 
+                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+                
+        elif self.state == "SETTLING":
+            # Estabilizar y preparar para volver al seguimiento normal
+            throttle, yaw = self._follow_line_with_authority(frame, drawing_frame)
+            
+            # Aplicar velocidad reducida durante la transición
+            if hasattr(self.lf, 'authority'):
+                self.lf.authority = 0.7
+            
+            self.state_timer -= 1
+            
+            if self.state_timer <= 0:
+                print("🎯 Intersección completada - volviendo a seguimiento normal")
+                self.state = "FOLLOWING"
+                self._reset_intersection_state()
+            
+            if drawing_frame is not None:
+                cv2.putText(drawing_frame, f"SETTLING: {self.state_timer}", 
                         (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
-        # ============ INFORMACIÓN DE DEBUG MEJORADA ============
+        # ============ INFORMACIÓN DE DEBUG ============
         if drawing_frame is not None:
-            # Estado actual con color según criticidad
+            # Estado actual
             state_colors = {
                 "FOLLOWING": (0, 255, 0),
-                "INTERSECTION_DETECTED": (0, 255, 255),
-                "CROSSING": (255, 0, 255),
-                "TURNING": (255, 255, 0),
-                "RESUMING": (0, 255, 0)
+                "APPROACHING_INTERSECTION": (255, 255, 0),
+                "CROSSING_INTERSECTION": (0, 255, 255),
+                "EXECUTING_TURN": (255, 0, 255),
+                "SETTLING": (0, 255, 0)
             }
             state_color = state_colors.get(self.state, (255, 255, 255))
             
             cv2.putText(drawing_frame, f"STATE: {self.state}", (10, 150), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, state_color, 2)
             
-            # Comando de giro actual
+            # Comando de giro
             if self.turn_command:
                 cv2.putText(drawing_frame, f"TURN CMD: {self.turn_command.name}", (10, 180), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
@@ -1266,132 +1227,86 @@ class TrackNavigator:
             cv2.putText(drawing_frame, f"INT_CONF: {self.intersection_confidence}/{self.min_confidence}", 
                     (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
-            # 🚨 MOSTRAR ESTADO DEL SEMÁFORO DE FORMA MUY PROMINENTE
+            # Estado del semáforo
             if self.current_light is not None:
                 light_names = ['🔴 RED', '🟡 YELLOW', '🟢 GREEN']
                 light_colors = [(0, 0, 255), (0, 255, 255), (0, 255, 0)]
-                light_bg_colors = [(0, 0, 128), (0, 128, 128), (0, 128, 0)]
                 
                 if 0 <= self.current_light < len(light_names):
-                    # Fondo del texto para mayor visibilidad
-                    text_size = cv2.getTextSize(f"STOPLIGHT: {light_names[self.current_light]}", 
-                                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)[0]
-                    cv2.rectangle(drawing_frame, (5, 280), (text_size[0] + 15, 320), 
-                                light_bg_colors[self.current_light], -1)
-                    
-                    cv2.putText(drawing_frame, f"STOPLIGHT: {light_names[self.current_light]}", 
-                            (10, 310), cv2.FONT_HERSHEY_SIMPLEX, 1.0, light_colors[self.current_light], 3)
+                    cv2.putText(drawing_frame, f"LIGHT: {light_names[self.current_light]}", 
+                            (10, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.8, light_colors[self.current_light], 2)
             else:
-                cv2.rectangle(drawing_frame, (5, 280), (250, 320), (64, 64, 64), -1)
-                cv2.putText(drawing_frame, "STOPLIGHT: NONE DETECTED", 
-                        (10, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 128, 128), 2)
+                cv2.putText(drawing_frame, "LIGHT: NONE", 
+                        (10, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 128, 128), 2)
             
-            # Mostrar velocidades actuales
-            cv2.putText(drawing_frame, f"v: {throttle:.3f} m/s", (10, 350), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(drawing_frame, f"w: {math.degrees(yaw):.1f}°/s", (10, 370), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
-            # Authority del line follower
-            if hasattr(self.lf, 'authority'):
-                cv2.putText(drawing_frame, f"Authority: {self.lf.authority:.2f}", (10, 390), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            # Velocidades
+            cv2.putText(drawing_frame, f"v: {throttle:.3f}, w: {math.degrees(yaw):.1f}°", 
+                    (10, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
-        # ============ VALIDACIÓN FINAL DE SEGURIDAD ============
-        # Verificación final por si algo se filtró
+        # Validación final de seguridad
         if self.current_light == 0 and throttle > 0:
-            print("🚨 FINAL SAFETY CHECK: Overriding movement due to red light!")
+            print("🚨 FINAL SAFETY: Overriding movement due to red light!")
             throttle = 0.0
             yaw = 0.0
         
         return throttle, yaw
 
-    """def _apply_sign_speed_control(self):
-        #Aplicar control de velocidad basado en señales detectadas
-        if hasattr(self.lf, 'authority'):
-            self.lf.authority = 1.0  # Reset
-        
-        if self.last_signs:
-            closest_signs = {}
-            for sign in self.last_signs:
-                if sign.approx_dist and (sign.type not in closest_signs or 
-                                       sign.approx_dist < closest_signs[sign.type].approx_dist):
-                    closest_signs[sign.type] = sign
+    def _reset_intersection_state(self):
+        """Reiniciar variables de estado de intersección"""
+        self.turn_command = None
+        self.intersection_confidence = 0
+        self.intersection_detected_frames = 0
+        self.last_intersection_center = None
+        self.state_timer = 0
+        # Reiniciar PIDs si están disponibles
+        if hasattr(self.lf, 'yaw_pid'):
+            self.lf.yaw_pid.reset()
 
-            if SignType.STOP in closest_signs and closest_signs[SignType.STOP].approx_dist < 0.4:
-                self.stopping = True
-            elif SignType.ROAD_WORK in closest_signs and closest_signs[SignType.ROAD_WORK].approx_dist < 0.75:
-                if hasattr(self.lf, 'authority'):
-                    self.lf.authority = 0.5  # Reducir velocidad
-            elif SignType.YIELD in closest_signs and closest_signs[SignType.YIELD].approx_dist < 0.75:
-                if hasattr(self.lf, 'authority'):
-                    self.lf.authority = 0.5  # Reducir velocidad a la mitad"""
-    """def _apply_sign_speed_control(self):
-        # Guardar señales detectadas en pending_action si estamos en FOLLOWING
-        if self.state == "FOLLOWING" and self.last_signs:
-            closest_signs = {}
-            for sign in self.last_signs:
-                if sign.approx_dist and (sign.type not in closest_signs or 
-                                        sign.approx_dist < closest_signs[sign.type].approx_dist):
-                    closest_signs[sign.type] = sign
-
-            if SignType.STOP in closest_signs and closest_signs[SignType.STOP].approx_dist < 0.7:
-                self.pending_action = 'STOP'
-            elif SignType.ROAD_WORK in closest_signs and closest_signs[SignType.ROAD_WORK].approx_dist < 0.75:
-                self.pending_action = 'SLOW'
-            elif SignType.YIELD in closest_signs and closest_signs[SignType.YIELD].approx_dist < 0.75:
-                self.pending_action = 'YIELD'"""
     def _apply_sign_speed_control(self):
-        if self.last_signs:
-            closest_signs = {}
-            for sign in self.last_signs:
-                if sign.approx_dist and (sign.type not in closest_signs or 
-                                        sign.approx_dist < closest_signs[sign.type].approx_dist):
-                    closest_signs[sign.type] = sign
-
-            # Si viene una intersección pronto (en FOLLOWING), guardar la acción
-            if self.state == "FOLLOWING" and self.intersection_detected:
-                if SignType.STOP in closest_signs and closest_signs[SignType.STOP].approx_dist < 0.7:
-                    self.pending_action = 'STOP'
-                elif SignType.ROAD_WORK in closest_signs and closest_signs[SignType.ROAD_WORK].approx_dist < 0.75:
-                    self.pending_action = 'SLOW'
-                elif SignType.YIELD in closest_signs and closest_signs[SignType.YIELD].approx_dist < 0.75:
-                    self.pending_action = 'YIELD'
+        """Control de velocidad basado en señales - simplificado"""
+        if not self.last_signs:
+            return
             
-            # Si no hay intersección, aplicar directamente
-            else:
-                if SignType.STOP in closest_signs and closest_signs[SignType.STOP].approx_dist < 0.7:
-                    self.stopping = True
-                elif SignType.ROAD_WORK in closest_signs and closest_signs[SignType.ROAD_WORK].approx_dist < 0.75:
-                    if hasattr(self.lf, 'authority'):
-                        self.lf.authority = 0.5
-                elif SignType.YIELD in closest_signs and closest_signs[SignType.YIELD].approx_dist < 0.75:
-                    if hasattr(self.lf, 'authority'):
-                        self.lf.authority = 0.5
+        # Buscar señales cercanas
+        close_signs = {}
+        for sign in self.last_signs:
+            if sign.approx_dist and sign.approx_dist < 1.0:  # Solo señales a menos de 1m
+                if sign.type not in close_signs or sign.approx_dist < close_signs[sign.type].approx_dist:
+                    close_signs[sign.type] = sign
 
+        # Aplicar acciones inmediatas (no relacionadas con intersecciones)
+        if SignType.STOP in close_signs and close_signs[SignType.STOP].approx_dist < 0.5:
+            print("🛑 Señal de STOP detectada - deteniendo")
+            self.stopping = True
+        elif SignType.ROAD_WORK in close_signs and close_signs[SignType.ROAD_WORK].approx_dist < 0.8:
+            if hasattr(self.lf, 'authority'):
+                self.lf.authority = 0.5
+                print("🚧 Zona de trabajo - reduciendo velocidad")
+        elif SignType.YIELD in close_signs and close_signs[SignType.YIELD].approx_dist < 0.8:
+            if hasattr(self.lf, 'authority'):
+                self.lf.authority = 0.6
+                print("⚠️ Ceder el paso - reduciendo velocidad")
 
     def _follow_line_with_authority(self, frame, drawing_frame):
-        #Seguir línea con el sistema de authority
+        """Seguir línea con sistema de authority"""
         if self.lf and hasattr(self.lf, 'follow_line'):
             return self.lf.follow_line(frame, drawing_frame=drawing_frame)
         else:
             return 0.0, 0.0
 
-    def _execute_turn(self, frame, drawing_frame):
-        #Ejecutar giro según el comando de dirección
-        throttle = 0.1  # Velocidad lenta durante el giro
+    def _execute_turn(self):
+        """Ejecutar giro según el comando - simplificado y más suave"""
+        throttle = self.intersection_speed  # Velocidad constante durante giros
         
         if self.turn_command == SignType.LEFT:
-            yaw = math.radians(45)  # Girar a la izquierda
+            yaw = math.radians(35)  # Giro más suave
         elif self.turn_command == SignType.RIGHT:
-            yaw = math.radians(-45)  # Girar a la derecha
+            yaw = math.radians(-35)
         elif self.turn_command == SignType.BACK:
-            yaw = math.radians(90)   # Giro de 180 grados (más tiempo)
-            if self.turning_timer > self.turning_duration * 0.7:  # Primera parte del giro
-                yaw = math.radians(60)
+            yaw = math.radians(50)  # Giro más pronunciado para 180°
         elif self.turn_command == SignType.FORWARD:
-            yaw = 0.0  # Continuar recto
-            throttle = 0.15  # Puede ir un poco más rápido
+            yaw = 0.0
+            throttle = self.intersection_speed * 1.2  # Ligeramente más rápido
         else:
             yaw = 0.0
             
