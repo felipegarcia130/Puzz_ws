@@ -23,6 +23,13 @@ setup(
             'detect_traffic_signs = traffic_signs_dataset.detect_traffic_signs:main',
             'line_intersect_signs = traffic_signs_dataset.line_intersect_signs:main',
             'line_intersect_traffic_signs = traffic_signs_dataset.line_intersect_traffic_signs:main',
+            'yolo_sign_detector_node = puzzlebot_navigation.yolo_sign_detector_node:main',
+            'intersection_detector_node = puzzlebot_navigation.intersection_detector_node:main',
+            'stoplight_detector_node = puzzlebot_navigation.stoplight_detector_node:main',
+            'flag_detector_node = puzzlebot_navigation.flag_detector_node:main',
+            'line_follower_node = puzzlebot_navigation.line_follower_node:main',
+            'track_navigator_node = puzzlebot_navigation.track_navigator_node:main',
+
 
         ],
     },

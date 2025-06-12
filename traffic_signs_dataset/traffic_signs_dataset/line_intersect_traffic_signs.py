@@ -232,7 +232,7 @@ class SignDetector:
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 class IntersectionDetectorAdvanced:
-    def __init__(self, v_fov=0.55, min_points=5, max_yaw=30.0, max_thr=0.15):
+    def __init__(self, v_fov=0.8, min_points=5, max_yaw=30.0, max_thr=0.15):
         self.v_fov = v_fov
         self.morph_kernel = np.ones((3, 3), np.uint8)
         self.erode_iterations = 3
@@ -477,7 +477,7 @@ class IntersectionDetectorAdvanced:
 
 class StoplightDetector:
     def __init__(self,
-        v_fov=0.5,
+        v_fov=0.9,
         chain_length=4,
         max_chain_gap=1,
         history_len=5,
@@ -493,9 +493,6 @@ class StoplightDetector:
         self.yellow_history = deque(maxlen=color_history_len)
         self.green_history = deque(maxlen=color_history_len)
         self.frame_count = 0
-        
-        # Mensaje de inicio
-       
 
     def enhance_saturation(self, frame, saturation_factor=1.4):
         """Aumentar saturación para colores más vivos del semáforo"""
@@ -511,6 +508,215 @@ class StoplightDetector:
         enhanced_hsv = cv2.merge([h, s, v])
         enhanced_frame = cv2.cvtColor(enhanced_hsv, cv2.COLOR_HSV2BGR)
         return enhanced_frame
+
+    def filter_background_noise(self, mask, frame_shape):
+        """
+        Filtrar ruido de fondo como cartón, eliminando áreas grandes y dispersas
+        """
+        # Encontrar contornos en la máscara
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return mask
+        
+        # Crear máscara limpia
+        clean_mask = np.zeros_like(mask)
+        
+        # Calcular área total de la imagen para referencia
+        total_area = frame_shape[0] * frame_shape[1]
+        max_allowed_area = total_area * 0.15  # Máximo 15% de la imagen
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            
+            # Filtrar por área (no muy grande ni muy pequeña)
+            if 50 < area < max_allowed_area:
+                # Calcular solidity manualmente (área del contorno / área del hull convexo)
+                hull = cv2.convexHull(contour)
+                hull_area = cv2.contourArea(hull)
+                
+                if hull_area > 0:
+                    solidity = area / hull_area
+                    
+                    # Filtrar por solidity (qué tan "sólido" es)
+                    if solidity > 0.3:  # Evita formas muy dispersas
+                        # Verificar aspect ratio del bounding box
+                        x, y, w, h = cv2.boundingRect(contour)
+                        aspect_ratio = max(w, h) / min(w, h) if min(w, h) > 0 else 10
+                        
+                        # Solo mantener formas no muy alargadas
+                        if aspect_ratio < 5.0:
+                            cv2.fillPoly(clean_mask, [contour], 255)
+        
+        return clean_mask
+
+    def is_likely_traffic_light(self, contour, frame, color_type="yellow"):
+        """
+        Determinar si un contorno es realmente un semáforo y no fondo de cartón
+        """
+        area = cv2.contourArea(contour)
+        
+        # 1. Filtro básico de área
+        if area < 100 or area > 8000:  # Muy pequeño o muy grande
+            return False, "área fuera de rango"
+        
+        # 2. Crear máscara para analizar solo esta región
+        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(mask, [contour], 255)
+        
+        # 3. Extraer región y convertir a diferentes espacios de color
+        region_bgr = cv2.bitwise_and(frame, frame, mask=mask)
+        region_hsv = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2HSV)
+        region_lab = cv2.cvtColor(region_bgr, cv2.COLOR_BGR2LAB)
+        
+        # 4. Obtener solo los píxeles del contorno
+        pixels_hsv = region_hsv[mask > 0]
+        pixels_lab = region_lab[mask > 0]
+        
+        if len(pixels_hsv) == 0:
+            return False, "sin píxeles"
+        
+        # 5. Estadísticas de color
+        mean_h = np.mean(pixels_hsv[:, 0])
+        mean_s = np.mean(pixels_hsv[:, 1])
+        mean_v = np.mean(pixels_hsv[:, 2])
+        std_v = np.std(pixels_hsv[:, 2])
+        std_s = np.std(pixels_hsv[:, 1])
+        
+        # 6. Análisis en espacio LAB (mejor para distinguir amarillo vs beige)
+        mean_a = np.mean(pixels_lab[:, 1])  # Canal a* (verde-rojo)
+        mean_b = np.mean(pixels_lab[:, 2])  # Canal b* (azul-amarillo)
+        
+        if color_type == "yellow":
+            # 7. Criterios específicos para amarillo vs cartón:
+            
+            # A. El amarillo verdadero tiene mayor saturación
+            if mean_s < 80:
+                return False, f"saturación muy baja: {mean_s:.0f}"
+            
+            # B. Los LEDs amarillos tienen más variación en brillo
+            if std_v < 15:
+                return False, f"brillo muy uniforme: {std_v:.1f}"
+            
+            # C. En espacio LAB, amarillo verdadero tiene b* > 0 (hacia amarillo)
+            if mean_b < 10:
+                return False, f"no es amarillo en LAB: {mean_b:.1f}"
+            
+            # D. Verificar que no sea demasiado "hacia el verde" en LAB
+            if mean_a < -10:  # Muy hacia el verde
+                return False, f"muy verde en LAB: {mean_a:.1f}"
+            
+            # E. El brillo debe ser alto para LEDs
+            if mean_v < 160:
+                return False, f"brillo insuficiente: {mean_v:.0f}"
+            
+            # F. Verificar que tenga forma compacta
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = max(w, h) / min(w, h)
+            if aspect_ratio > 2.5:  # Muy alargado
+                return False, f"muy alargado: {aspect_ratio:.1f}"
+            
+            # G. Verificar que no esté en el borde de la imagen (cartón suele estar ahí)
+            img_h, img_w = frame.shape[:2]
+            center_x, center_y = x + w//2, y + h//2
+            
+            border_margin = 50
+            if (center_x < border_margin or center_x > img_w - border_margin or
+                center_y < border_margin or center_y > img_h - border_margin):
+                return False, "muy cerca del borde"
+        
+        return True, f"OK (S:{mean_s:.0f}, V:{mean_v:.0f}, stdV:{std_v:.1f}, LAB_b:{mean_b:.1f})"
+
+    def analyze_shape(self, contour, min_area=100, color_type="general", original_frame=None):
+        """
+        Analizar si un contorno es una forma válida (círculo o elipse)
+        """
+        area = cv2.contourArea(contour)
+        
+        if area < min_area:
+            return False, f"Área muy pequeña: {area:.0f}"
+        
+        # Análisis específico para distinguir semáforo de fondo
+        if original_frame is not None:
+            is_light, light_info = self.is_likely_traffic_light(contour, original_frame, color_type)
+            if not is_light:
+                return False, f"No es semáforo: {light_info}"
+        
+        # Obtener el perímetro
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            return False, "Perímetro cero"
+        
+        # Calcular circularidad (4π * área / perímetro²)
+        circularity = 4 * np.pi * area / (perimeter * perimeter)
+        
+        # Ajustar elipse si hay suficientes puntos
+        if len(contour) >= 5:
+            try:
+                # Ajustar elipse al contorno
+                ellipse = cv2.fitEllipse(contour)
+                center, axes, angle = ellipse
+                major_axis = max(axes)
+                minor_axis = min(axes)
+                
+                # Calcular excentricidad de la elipse
+                if major_axis > 0:
+                    eccentricity = np.sqrt(1 - (minor_axis / major_axis) ** 2)
+                    aspect_ratio = major_axis / minor_axis
+                else:
+                    eccentricity = 1.0
+                    aspect_ratio = 1.0
+                
+                # Criterios de validación más estrictos para amarillo
+                if color_type == "yellow":
+                    # Amarillo MUY restrictivo para evitar cartón
+                    is_valid_ellipse = (
+                        eccentricity <= 0.6 and   # Solo elipses moderadas
+                        aspect_ratio <= 2.0 and   # Evita formas alargadas
+                        circularity > 0.4         # Alta circularidad requerida
+                    )
+                else:
+                    # Criterios normales para rojo y verde
+                    is_valid_ellipse = (
+                        eccentricity <= 0.8 and
+                        aspect_ratio <= 3.0 and
+                        circularity > 0.2
+                    )
+                
+                shape_info = f"área:{area:.0f}, circ:{circularity:.2f}, exc:{eccentricity:.2f}, ratio:{aspect_ratio:.2f} | {light_info if original_frame else 'sin análisis'}"
+                
+                return is_valid_ellipse, shape_info
+                
+            except cv2.error:
+                # Si falla el ajuste de elipse, usar solo circularidad
+                min_circularity = 0.5 if color_type == "yellow" else 0.3
+                is_valid_circle = circularity > min_circularity
+                shape_info = f"área:{area:.0f}, circ:{circularity:.2f} (solo círculo) | {light_info if original_frame else 'sin análisis'}"
+                return is_valid_circle, shape_info
+        else:
+            # Pocos puntos, usar solo circularidad
+            min_circularity = 0.5 if color_type == "yellow" else 0.3
+            is_valid_circle = circularity > min_circularity
+            shape_info = f"área:{area:.0f}, circ:{circularity:.2f} (pocos puntos) | {light_info if original_frame else 'sin análisis'}"
+            return is_valid_circle, shape_info
+
+    def draw_shape_info(self, drawing_frame, contour, color, label, shape_info, y_pos):
+        """Dibujar información de la forma detectada"""
+        if drawing_frame is not None:
+            # Dibujar contorno
+            cv2.drawContours(drawing_frame, [contour], -1, color, 3)
+            
+            # Dibujar elipse ajustada si es posible
+            if len(contour) >= 5:
+                try:
+                    ellipse = cv2.fitEllipse(contour)
+                    cv2.ellipse(drawing_frame, ellipse, color, 2)
+                except cv2.error:
+                    pass
+            
+            # Texto con información
+            cv2.putText(drawing_frame, f"{label}: {shape_info}", 
+                       (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
     def classify_stoplight_colors(self, frame, drawing_frame=None):
         """Detectar colores de semáforo usando la lógica que funciona"""
@@ -528,18 +734,19 @@ class StoplightDetector:
         upper_green = np.array([80, 255, 255])
 
         # ROJO - rangos más restrictivos para eliminar falsos positivos
-        lower_red1 = np.array([0, 120, 100])    # Saturación y brillo más altos
-        upper_red1 = np.array([8, 255, 255])    # Tono más específico
-        lower_red2 = np.array([172, 120, 100])  # Saturación y brillo más altos
+        lower_red1 = np.array([0, 120, 100])
+        upper_red1 = np.array([8, 255, 255])
+        lower_red2 = np.array([172, 120, 100])
         upper_red2 = np.array([180, 255, 255])
 
-        # Amarillo - rangos MUY específicos para evitar traslape con rojo y verde
-        lower_yellow1 = np.array([18, 100, 150])   # Amarillo puro, saturación alta
-        upper_yellow1 = np.array([25, 255, 255])   # Rango muy estrecho
+        # Amarillo - rangos MÁS específicos para evitar cartón
+        # Solo amarillo verdadero con cierta saturación
+        lower_yellow1 = np.array([20, 100, 150])   # Saturación mínima alta
+        upper_yellow1 = np.array([30, 255, 255])   # Rango estrecho
         
-        # Amarillo claro pero MUY restrictivo
-        lower_yellow2 = np.array([26, 30, 200])    # Solo amarillos claros muy específicos
-        upper_yellow2 = np.array([32, 80, 255])    # Evita traslape con verde (40+)
+        # Amarillo brillante (LEDs)
+        lower_yellow2 = np.array([18, 80, 200])    # Alto brillo, saturación media
+        upper_yellow2 = np.array([32, 200, 255])   # Evita amarillos muy pálidos
 
         # Crear máscaras
         mask_green = cv2.inRange(hsv_proc, lower_green, upper_green)
@@ -547,10 +754,12 @@ class StoplightDetector:
         mask_red2 = cv2.inRange(hsv_proc, lower_red2, upper_red2)
         mask_red = cv2.bitwise_or(mask_red1, mask_red2)
         
-        # Combinar ambos rangos de amarillo
         mask_yellow1 = cv2.inRange(hsv_proc, lower_yellow1, upper_yellow1)
         mask_yellow2 = cv2.inRange(hsv_proc, lower_yellow2, upper_yellow2)
         mask_yellow = cv2.bitwise_or(mask_yellow1, mask_yellow2)
+        
+        # Filtrar ruido de fondo específicamente para amarillo
+        mask_yellow = self.filter_background_noise(mask_yellow, frame_proc.shape)
 
         # Operaciones morfológicas
         kernel = np.ones((5, 5), np.uint8)
@@ -567,71 +776,70 @@ class StoplightDetector:
         yellow_detected = False
         green_detected = False
 
-        # Debug: Número de contornos encontrados (opcional)
+        # Debug: Número de contornos encontrados
         if len(contours_green) > 0 or len(contours_red) > 0 or len(contours_yellow) > 0:
             print(f'🔍 Contornos encontrados - Verde: {len(contours_green)}, Rojo: {len(contours_red)}, Amarillo: {len(contours_yellow)}')
 
-        # Detectar qué colores están presentes
         colors_detected = []
 
-        # 🟡 AMARILLO - Detección con filtros
+        # 🟡 AMARILLO - Detección ultra-estricta anti-cartón
         if contours_yellow:
-            largest_yellow = max(contours_yellow, key=cv2.contourArea)
-            yellow_area = cv2.contourArea(largest_yellow)
+            # Pre-filtrar contornos por área más estricta
+            valid_contours = []
+            for c in contours_yellow:
+                area = cv2.contourArea(c)
+                if 150 < area < 3000:  # Rango más estricto
+                    # Verificar forma básica antes del análisis completo
+                    perimeter = cv2.arcLength(c, True)
+                    if perimeter > 0:
+                        circularity = 4 * np.pi * area / (perimeter * perimeter)
+                        if circularity > 0.3:  # Pre-filtro de circularidad
+                            valid_contours.append(c)
             
-            if yellow_area > 200:  # Área mínima
-                perimeter = cv2.arcLength(largest_yellow, True)
-                if perimeter > 0:
-                    circularity = 4 * np.pi * yellow_area / (perimeter * perimeter)
-                    
-                    # Solo aceptar formas circulares (semáforo)
-                    if circularity > 0.3:  # Menos restrictivo que el rojo
-                        yellow_detected = True
-                        colors_detected.append(f"AMARILLO (área: {yellow_area:.0f})")
-                        if drawing_frame is not None:
-                            cv2.drawContours(drawing_frame, [largest_yellow], -1, (0, 255, 255), 3)
-                            cv2.putText(drawing_frame, f"YELLOW: {yellow_area:.0f}", 
-                                    (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            if valid_contours:
+                # Tomar el más circular, no necesariamente el más grande
+                best_contour = max(valid_contours, key=lambda c: 
+                    4 * np.pi * cv2.contourArea(c) / (cv2.arcLength(c, True) ** 2))
+                
+                is_valid, shape_info = self.analyze_shape(best_contour, min_area=150, 
+                                                        color_type="yellow", original_frame=frame_proc)
+                
+                if is_valid:
+                    yellow_detected = True
+                    colors_detected.append(f"AMARILLO ({shape_info})")
+                    self.draw_shape_info(drawing_frame, best_contour, (0, 255, 255), 
+                                       "YELLOW", shape_info, 80)
+                else:
+                    # Debug: mostrar por qué se rechazó
+                    if self.frame_count % 30 == 0:  # Cada 30 frames
+                        print(f"❌ Amarillo rechazado: {shape_info}")
 
-        # 🟥 ROJO - Detección con filtros estrictos
+        # 🟥 ROJO - Detección con análisis de forma
         if contours_red:
             largest_red = max(contours_red, key=cv2.contourArea)
-            red_area = cv2.contourArea(largest_red)
+            is_valid, shape_info = self.analyze_shape(largest_red, min_area=150)
             
-            if red_area > 100:  # Filtro inicial de área
-                if red_area > 200:  # Área mínima alta para semáforos
-                    # Verificar que el contorno sea más o menos circular/cuadrado
-                    perimeter = cv2.arcLength(largest_red, True)
-                    if perimeter > 0:
-                        circularity = 4 * np.pi * red_area / (perimeter * perimeter)
-                        
-                        # Solo aceptar formas muy circulares (semáforo)
-                        if circularity > 0.4:  # Más restrictivo
-                            red_detected = True
-                            colors_detected.append(f"ROJO (área: {red_area:.0f})")
-                            if drawing_frame is not None:
-                                cv2.drawContours(drawing_frame, [largest_red], -1, (0, 0, 255), 3)
-                                cv2.putText(drawing_frame, f"RED: {red_area:.0f}", 
-                                        (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            if is_valid:
+                red_detected = True
+                colors_detected.append(f"ROJO ({shape_info})")
+                self.draw_shape_info(drawing_frame, largest_red, (0, 0, 255), 
+                                   "RED", shape_info, 50)
 
-        # 🟢 VERDE - Detección
+        # 🟢 VERDE - Detección con análisis de forma
         if contours_green:
             largest_green = max(contours_green, key=cv2.contourArea)
-            green_area = cv2.contourArea(largest_green)
+            is_valid, shape_info = self.analyze_shape(largest_green, min_area=200)
             
-            if green_area > 800:  # Área mínima para verde (del código original)
+            if is_valid:
                 green_detected = True
-                colors_detected.append(f"VERDE (área: {green_area:.0f})")
-                if drawing_frame is not None:
-                    cv2.drawContours(drawing_frame, [largest_green], -1, (0, 255, 0), 3)
-                    cv2.putText(drawing_frame, f"GREEN: {green_area:.0f}", 
-                            (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                colors_detected.append(f"VERDE ({shape_info})")
+                self.draw_shape_info(drawing_frame, largest_green, (0, 255, 0), 
+                                   "GREEN", shape_info, 110)
 
-        # Imprimir colores detectados (opcional)
+        # Imprimir colores detectados
         if colors_detected:
             print(f'🎯 Colores detectados: {", ".join(colors_detected)}')
         else:
-            # Solo mostrar cada ciertos frames para no saturar
             if self.frame_count % 60 == 0:
                 print('❌ No se detectaron colores válidos')
 
@@ -672,6 +880,9 @@ class StoplightDetector:
                 cv2.putText(drawing_frame, "STOPLIGHT: GREEN", (10, 170), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
+        # Incrementar contador de frames
+        self.frame_count += 1
+
         # Retornar estado confirmado
         if confirmed_red:
             return 0  # Red
@@ -680,7 +891,6 @@ class StoplightDetector:
         elif confirmed_green:
             return 2  # Green
         return None  # No detection
-
 
 class FlagDetector:
     def __init__(self, dist_thres=0.40):
@@ -782,9 +992,9 @@ class TrackNavigator:
 
 
     def navigate(self, frame, drawing_frame=None):
-        #Máquina de estados para navegación completa con intersecciones
-                # --- DETECCIÓN DE BANDERA ---
-         # --- DETECCIÓN DE BANDERA ---
+        """Máquina de estados para navegación completa con intersecciones - VERSIÓN CORREGIDA"""
+        
+        # --- DETECCIÓN DE BANDERA ---
         if self.fd:
             flag_dist = self.fd.get_flag_distance_nb(frame, drawing_frame=drawing_frame)
             if flag_dist is not None and flag_dist <= self.fd.dist_thres:
@@ -800,23 +1010,45 @@ class TrackNavigator:
                         return ret
                 return 0.0, 0.0
 
-        # --- DETECCIÓN DE SEMÁFORO ---
+        # --- DETECCIÓN DE SEMÁFORO (MEJORADA Y UNIFICADA) ---
+        self.current_light = None
+        self.last_stoplight = None
+        
         if self.stl_det:
-            stoplight = self.stl_det.identify_stoplight(frame, drawing_frame=drawing_frame)
-            self.last_stoplight = stoplight
-            if stoplight == 0:
-                self.lf.authority = 0.0
-                self.poll = False
-            elif stoplight == 1:
-                self.lf.authority = 0.5
-                self.poll = False
-            elif stoplight == 2:
-                self.lf.authority = 1.0
-                self.poll = True
+            # Detectar semáforo UNA SOLA VEZ por frame
+            detected_light = self.stl_det.identify_stoplight(frame, drawing_frame=drawing_frame)
+            self.current_light = detected_light
+            self.last_stoplight = detected_light
 
-        if self.stl_det:
-            self.current_light = self.stl_det.identify_stoplight(frame, drawing_frame=drawing_frame)
+        # 🚨 VERIFICACIÓN CRÍTICA DE SEMÁFORO ROJO - MÁXIMA PRIORIDAD
+        # Esta verificación debe ser PRIORITARIA sobre cualquier otro estado
+        if self.current_light == 0:  # ROJO DETECTADO
+            # FORZAR DETENCIÓN INMEDIATA, sin importar el estado actual
+            if drawing_frame is not None:
+                cv2.putText(drawing_frame, "🚨 RED LIGHT - EMERGENCY STOP", 
+                        (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+                # Dibujar rectángulo de alerta
+                cv2.rectangle(drawing_frame, (0, 240), (500, 280), (0, 0, 255), 3)
+            
+            # Log crítico
+            print("🚨 CRITICAL STOP: RED LIGHT DETECTED!")
+            return 0.0, 0.0  # DETENCIÓN ABSOLUTA - NO PROCESAR MÁS ESTADOS
 
+        # Si hay luz amarilla, aplicar lógica conservadora
+        if self.current_light == 1:  # AMARILLO
+            if self.state == "INTERSECTION_DETECTED":
+                # Política conservadora: con amarillo NO cruzar
+                if drawing_frame is not None:
+                    cv2.putText(drawing_frame, "🟡 YELLOW - CONSERVATIVE STOP", 
+                            (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                print("🟡 Yellow light - stopping conservatively")
+                return 0.0, 0.0  # Detenerse por seguridad
+            else:
+                # Si no estamos en intersección, reducir velocidad significativamente
+                if hasattr(self.lf, 'authority'):
+                    self.lf.authority = 0.3
+
+        # --- MANEJO DE SEÑALES DE STOP ---
         if self.stopping:
             if self.stop_time is None:
                 self.stop_time = time.time()
@@ -827,7 +1059,7 @@ class TrackNavigator:
                 self.stopping = False
                 self.stop_time = None
 
-        # Verificar si se completó el cruce y aplicar acción pendiente
+        # --- APLICAR ACCIONES PENDIENTES POST-INTERSECCIÓN ---
         if self.just_crossed_intersection and self.cross_complete_time is not None:
             if time.time() > self.cross_complete_time:
                 self.just_crossed_intersection = False
@@ -838,7 +1070,7 @@ class TrackNavigator:
                         self.lf.authority = 0.5
                 self.pending_action = None
 
-        # Detectar señales en cada frame
+        # --- DETECCIÓN DE SEÑALES ---
         if self.sd:
             self.last_signs = self.sd.get_confirmed_signs_nb(frame, drawing_frame=drawing_frame)
             # Actualizar comando de giro si hay señales direccionales
@@ -850,7 +1082,7 @@ class TrackNavigator:
                     self.turn_command = best_turn_sign.type
                     self.last_turn_sign = best_turn_sign
 
-        # Detectar intersecciones
+        # --- DETECCIÓN DE INTERSECCIONES ---
         intersection = None
         if self.id:
             intersection = self.id.find_intersection(frame, drawing_frame=drawing_frame)
@@ -861,17 +1093,14 @@ class TrackNavigator:
             else:
                 self.intersection_confidence = max(self.intersection_confidence - 1, 0)
 
-        # ============ MÁQUINA DE ESTADOS ============
+        # ============ MÁQUINA DE ESTADOS MEJORADA ============
         
         if self.state == "FOLLOWING":
-            if self.current_light == 0:  # ROJO
-                return 0.0, 0.0  # 🚦 Detener completamente
-            elif self.current_light == 1:  # AMARILLO
-                if hasattr(self.lf, 'authority'):
-                    self.lf.authority = 0.4  # ⚠️ Reducir velocidad
             # Estado normal: seguir líneas
             if hasattr(self.lf, 'authority'):
-                self.lf.authority = 1.0
+                # Restaurar authority a 1.0 si no hay restricciones de semáforo
+                if self.current_light != 1:  # Si no es amarillo
+                    self.lf.authority = 1.0
             
             # Controlar velocidad basado en señales
             self._apply_sign_speed_control()
@@ -882,7 +1111,7 @@ class TrackNavigator:
                     self.state = "INTERSECTION_DETECTED"
                     if drawing_frame is not None:
                         cv2.putText(drawing_frame, f"INTERSECTION DETECTED - WILL GO {self.turn_command.name}", 
-                                   (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                                (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             
             # Seguir línea normalmente
             throttle, yaw = self._follow_line_with_authority(frame, drawing_frame)
@@ -890,45 +1119,72 @@ class TrackNavigator:
         elif self.state == "INTERSECTION_DETECTED":
             # Detectamos intersección, prepararse para cruzar
             if hasattr(self.lf, 'authority'):
-                self.lf.authority = 0.8  # Reducir velocidad
+                self.lf.authority = 0.8  # Reducir velocidad para aproximación
             
             # Alinearse con la intersección
             if intersection:
                 throttle, yaw = self.id.stop_at_intersection(frame, drawing_frame=drawing_frame, intersection=intersection)
-            # Cuando estemos muy cerca (throttle muy bajo), empezar a cruzar
-                if abs(throttle) < 0.05 and (self.current_light == 2 or self.current_light is None):  # Verde O sin semáforo
-                    self.state = "CROSSING"
-                    self.crossing_timer = self.crossing_duration
-                    if drawing_frame is not None:
-                        cv2.putText(drawing_frame, f"STARTING TO CROSS - GOING {self.turn_command.name}", 
-                                (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-                elif abs(throttle) < 0.08 and self.current_light == 1:  # Amarillo
-                    # Lógica realista: si está MUY cerca, cruza; si no, se detiene
-                    if abs(throttle) < 0.05:  # MUY cerca (umbral más estricto)
+                
+                # 🚨 CONDICIÓN DE CRUCE MEJORADA CON VERIFICACIÓN ESTRICTA DE SEMÁFORO
+                if abs(throttle) < 0.05:  # Estamos muy cerca de la intersección
+                    
+                    if self.current_light == 2:  # SOLO VERDE PERMITE CRUZAR
                         self.state = "CROSSING"
                         self.crossing_timer = self.crossing_duration
                         if drawing_frame is not None:
-                            cv2.putText(drawing_frame, f"YELLOW - TOO CLOSE, CROSSING {self.turn_command.name}", 
-                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                    elif abs(throttle) >= 0.05:  # No tan cerca, puede detenerse
+                            cv2.putText(drawing_frame, f"🟢 GREEN - CROSSING {self.turn_command.name}", 
+                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        print(f"🟢 Green light confirmed - starting to cross towards {self.turn_command.name}")
+                    
+                    elif self.current_light == 0:  # ROJO - MANTENER PARADO
                         throttle = 0.0
                         yaw = 0.0
                         if drawing_frame is not None:
-                            cv2.putText(drawing_frame, "YELLOW - STOPPING SAFELY", 
-                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                elif abs(throttle) < 0.05 and self.current_light == 0:  # Rojo
-                    throttle = 0.0  # Mantenerse detenido
-                    yaw = 0.0
-                    if drawing_frame is not None:
-                        cv2.putText(drawing_frame, "RED - STOPPED", 
-                                (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                            cv2.putText(drawing_frame, "🔴 RED - MUST STOP", 
+                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 3)
+                        print("🔴 Red light - maintaining stop at intersection")
                     
+                    elif self.current_light == 1:  # AMARILLO - NO CRUZAR
+                        throttle = 0.0
+                        yaw = 0.0
+                        if drawing_frame is not None:
+                            cv2.putText(drawing_frame, "🟡 YELLOW - SAFETY STOP", 
+                                    (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        print("🟡 Yellow light - safety stop at intersection")
+                    
+                    elif self.current_light is None:  # SIN SEMÁFORO DETECTADO
+                        # Ser muy conservador: esperar confirmación de que NO hay semáforo
+                        if not hasattr(self, '_no_light_counter'):
+                            self._no_light_counter = 0
+                        self._no_light_counter += 1
+                        
+                        # Requiere muchos frames consecutivos sin detectar semáforo
+                        if self._no_light_counter > 15:  # 15 frames sin detectar semáforo
+                            self.state = "CROSSING"
+                            self.crossing_timer = self.crossing_duration
+                            if drawing_frame is not None:
+                                cv2.putText(drawing_frame, f"NO TRAFFIC LIGHT - CROSSING {self.turn_command.name}", 
+                                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                            print(f"No traffic light confirmed after {self._no_light_counter} frames - proceeding to cross")
+                        else:
+                            throttle = 0.0
+                            yaw = 0.0
+                            if drawing_frame is not None:
+                                cv2.putText(drawing_frame, f"WAITING FOR LIGHT CONFIRMATION {self._no_light_counter}/15", 
+                                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                            print(f"Waiting for traffic light confirmation: {self._no_light_counter}/15")
+                else:
+                    # Reset contador si no estamos cerca de la intersección
+                    if hasattr(self, '_no_light_counter'):
+                        self._no_light_counter = 0
             else:
                 # Si perdemos la intersección, volver a seguir línea
                 throttle, yaw = self._follow_line_with_authority(frame, drawing_frame)
                 
         elif self.state == "CROSSING":
             # Cruzar la intersección en línea recta
+            # Una vez iniciado el cruce, DEBE completarse sin revisar semáforo
+            # (es peligroso detenerse en medio de la intersección)
             throttle = 0.15  # Velocidad constante para cruzar
             yaw = 0.0       # Sin giro, ir derecho
             
@@ -938,11 +1194,12 @@ class TrackNavigator:
                 self.turning_timer = self.turning_duration
                 if drawing_frame is not None:
                     cv2.putText(drawing_frame, f"CROSSED - NOW TURNING {self.turn_command.name}", 
-                               (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                            (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                print(f"Intersection crossed - now turning {self.turn_command.name}")
             
             if drawing_frame is not None:
                 cv2.putText(drawing_frame, f"CROSSING INTERSECTION: {self.crossing_timer}", 
-                           (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 
         elif self.state == "TURNING":
             # Ejecutar el giro según la señal
@@ -958,11 +1215,12 @@ class TrackNavigator:
 
                 if drawing_frame is not None:
                     cv2.putText(drawing_frame, "TURN COMPLETED - RESUMING LINE FOLLOWING", 
-                               (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                            (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                print("Turn completed - resuming line following")
             
             if drawing_frame is not None:
                 cv2.putText(drawing_frame, f"TURNING {self.turn_command.name}: {self.turning_timer}", 
-                           (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 
         elif self.state == "RESUMING":
             # Estabilizar y volver a seguimiento normal
@@ -973,34 +1231,78 @@ class TrackNavigator:
                 self.state = "FOLLOWING"
                 self.turn_command = None  # Limpiar comando
                 self.intersection_confidence = 0  # Reset confianza
+                if hasattr(self, '_no_light_counter'):
+                    self._no_light_counter = 0  # Reset contador de confirmación
                 if drawing_frame is not None:
                     cv2.putText(drawing_frame, "RESUMED NORMAL LINE FOLLOWING", 
-                               (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                            (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                print("Resumed normal line following")
             
             if drawing_frame is not None:
                 cv2.putText(drawing_frame, f"RESUMING: {self.resuming_timer}", 
-                           (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
-        # Información de debug común
+        # ============ INFORMACIÓN DE DEBUG MEJORADA ============
         if drawing_frame is not None:
-            # Estado actual
+            # Estado actual con color según criticidad
+            state_colors = {
+                "FOLLOWING": (0, 255, 0),
+                "INTERSECTION_DETECTED": (0, 255, 255),
+                "CROSSING": (255, 0, 255),
+                "TURNING": (255, 255, 0),
+                "RESUMING": (0, 255, 0)
+            }
+            state_color = state_colors.get(self.state, (255, 255, 255))
+            
             cv2.putText(drawing_frame, f"STATE: {self.state}", (10, 150), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, state_color, 2)
             
             # Comando de giro actual
             if self.turn_command:
                 cv2.putText(drawing_frame, f"TURN CMD: {self.turn_command.name}", (10, 180), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
             
             # Confianza de intersección
             cv2.putText(drawing_frame, f"INT_CONF: {self.intersection_confidence}/{self.min_confidence}", 
-                       (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            if self.stl_det and self.last_stoplight is not None:
-                names = ['RED', 'YELLOW', 'GREEN']
-                if 0 <= self.last_stoplight < len(names):
-                    cv2.putText(drawing_frame, f"🚦 STOPLIGHT: {names[self.last_stoplight]}", 
-                                (10, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-
+                    (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # 🚨 MOSTRAR ESTADO DEL SEMÁFORO DE FORMA MUY PROMINENTE
+            if self.current_light is not None:
+                light_names = ['🔴 RED', '🟡 YELLOW', '🟢 GREEN']
+                light_colors = [(0, 0, 255), (0, 255, 255), (0, 255, 0)]
+                light_bg_colors = [(0, 0, 128), (0, 128, 128), (0, 128, 0)]
+                
+                if 0 <= self.current_light < len(light_names):
+                    # Fondo del texto para mayor visibilidad
+                    text_size = cv2.getTextSize(f"STOPLIGHT: {light_names[self.current_light]}", 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)[0]
+                    cv2.rectangle(drawing_frame, (5, 280), (text_size[0] + 15, 320), 
+                                light_bg_colors[self.current_light], -1)
+                    
+                    cv2.putText(drawing_frame, f"STOPLIGHT: {light_names[self.current_light]}", 
+                            (10, 310), cv2.FONT_HERSHEY_SIMPLEX, 1.0, light_colors[self.current_light], 3)
+            else:
+                cv2.rectangle(drawing_frame, (5, 280), (250, 320), (64, 64, 64), -1)
+                cv2.putText(drawing_frame, "STOPLIGHT: NONE DETECTED", 
+                        (10, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (128, 128, 128), 2)
+            
+            # Mostrar velocidades actuales
+            cv2.putText(drawing_frame, f"v: {throttle:.3f} m/s", (10, 350), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(drawing_frame, f"w: {math.degrees(yaw):.1f}°/s", (10, 370), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # Authority del line follower
+            if hasattr(self.lf, 'authority'):
+                cv2.putText(drawing_frame, f"Authority: {self.lf.authority:.2f}", (10, 390), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        # ============ VALIDACIÓN FINAL DE SEGURIDAD ============
+        # Verificación final por si algo se filtró
+        if self.current_light == 0 and throttle > 0:
+            print("🚨 FINAL SAFETY CHECK: Overriding movement due to red light!")
+            throttle = 0.0
+            yaw = 0.0
         
         return throttle, yaw
 
@@ -1393,7 +1695,9 @@ class LineFollowerWithYOLONode(Node):
 
         self.bridge = CvBridge()
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel_safe', 10)
+        #self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10) Simulador
         self.image_sub = self.create_subscription(Image, '/image_raw', self.image_callback, 10)
+        #self.image_sub = self.create_subscription(Image, '/camera/image_raw', self.image_callback, 10) Simulador
         self.debug_pub = self.create_publisher(Image, '/debug_image', 10)
         self.status_pub = self.create_publisher(String, '/robot_status', 10)
 
