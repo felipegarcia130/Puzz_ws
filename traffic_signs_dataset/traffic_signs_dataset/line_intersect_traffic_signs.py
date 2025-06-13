@@ -231,60 +231,250 @@ class SignDetector:
                     label += f" [{sign.approx_dist:.2f}m]"
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-class IntersectionDetectorAdvanced:
-    def __init__(self, v_fov=0.8, min_points=5, max_yaw=30.0, max_thr=0.15):
-        self.v_fov = v_fov
-        self.morph_kernel = np.ones((3, 3), np.uint8)
-        self.erode_iterations = 3
-        self.dilate_iterations = 2
-        self.max_aspect_ratio = 10.0
-        self.min_area = 20
-        self.ep = 0.035
-        self.min_points = min_points
-        self.yaw_threshold = 5.0
+class IntersectionDetector:
+    
+    @staticmethod
+    def undistort_fisheye(frame, zoom=True):
+        """
+        Undistort a fisheye image.
+        Si no tienes parámetros de calibración, puedes desactivar esto
+        estableciendo undistort=False en IntersectionDetector
+        """
+        # Si no tienes matrices K y D de calibración, simplemente retorna el frame original
+        # y una máscara de unos (todos los píxeles válidos)
+        h, w = frame.shape[:2]
+        if zoom:
+            return frame, None
+        else:
+            valid_mask = np.ones((h, w), dtype=np.uint8)
+            return frame, valid_mask
+
+    @staticmethod
+    def adaptive_thres_standalone(frame, drawing_frame=None,
+        blur_kernel_size=(7, 7),
+        adaptive_method=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        threshold_type=cv2.THRESH_BINARY_INV,
+        block_size=141,
+        c_value=6,
+    ):
+        """
+        Versión standalone de adaptive_thres para usar en IntersectionDetector
+        """
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, blur_kernel_size, 0)
+        mask = cv2.adaptiveThreshold(gray, 255, adaptive_method, threshold_type, block_size, c_value)
+        if drawing_frame is not None:
+            drawing_frame[:] = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        return mask
+
+    @staticmethod
+    def get_contour_line_info_standalone(c, fix_vert=True):
+        """
+        Versión standalone compatible con tu get_contour_line_info pero con formato estándar
+        """
+        vx, vy, cx, cy = cv2.fitLine(c, cv2.DIST_L2, 0, 0.01, 0.01).flatten()
         
-        # Use SimplePID from original code
-        self.w_pid = SimplePID(Kp=2.0, Ki=0.0, Kd=0.1, setpoint=0.0, output_limits=(-math.radians(max_yaw), math.radians(max_yaw)))
-        self.v_pid = SimplePID(Kp=0.5, Ki=0.0, Kd=0.1, setpoint=0.7, output_limits=(-max_thr, max_thr))
+        # Project contour points onto the line's direction vector.
+        projections = [((int(pt[0][0]) - int(cx)) * vx + (int(pt[0][1]) - int(cy)) * vy) for pt in c]
+        min_proj = min(projections)
+        max_proj = max(projections)
+        
+        # Compute endpoints from the extreme projection values.
+        pt1 = (int(round(cx + vx * min_proj)), int(round(cy + vy * min_proj)))
+        pt2 = (int(round(cx + vx * max_proj)), int(round(cy + vy * max_proj)))
+        
+        # Calculate the line angle in degrees.
+        angle = math.degrees(math.atan2(vy, vx))
+        if fix_vert:
+            angle = angle - 90 * np.sign(angle)
+        
+        # Calculate the line length given pt1 and pt2.
+        length = math.hypot(pt2[0] - pt1[0], pt2[1] - pt1[1])
+        
+        # Ensure cx, cy are ints as well
+        cx_int = int(round(cx))
+        cy_int = int(round(cy))
+        center = (cx_int, cy_int)
+        
+        return pt1, pt2, center, angle, length
+
+    @staticmethod
+    def group_dotted_lines_simple(points, min_inliers=4, dist_threshold=3.0, distance_ratio=2.5):
+        """
+        Agrupa puntos en líneas punteadas
+        points: lista de tuplas (x, y)
+        Returns: lista de listas de puntos, cada una representando una línea punteada
+        """
+        if len(points) < min_inliers:
+            return []
+        
+        pts_arr = np.array(points, dtype=float)
+        from itertools import combinations
+        
+        # 1) Collect every inlier‐set for each line defined by a point pair
+        candidate_sets = {}
+        for i, j in combinations(range(len(pts_arr)), 2):
+            p1, p2 = pts_arr[i], pts_arr[j]
+            v = p2 - p1
+            norm = np.linalg.norm(v)
+            if norm < 1e-6:
+                continue
+            u = v / norm
+            # normal to line
+            n = np.array([-u[1], u[0]])
+            # distance of every point to this line
+            dists = np.abs((pts_arr - p1) @ n)
+            inliers = np.where(dists <= dist_threshold)[0]
+            if len(inliers) >= min_inliers:
+                # sort the inliers by their original tuple to make a unique key
+                key = tuple(sorted((points[k] for k in inliers)))
+                candidate_sets[key] = inliers
+
+        # 2) For each unique inlier‐set, split it into contiguous segments by gap
+        lines = []
+        for key, idxs in candidate_sets.items():
+            arr = np.array(key, dtype=float)
+            # principal direction via PCA (largest eigenvector of covariance)
+            if len(arr) < 2:
+                continue
+            cov = np.cov(arr, rowvar=False)
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            dir_vec = eigvecs[:, np.argmax(eigvals)]
+
+            # project & sort
+            proj = arr @ dir_vec
+            order = np.argsort(proj)
+            sorted_pts = arr[order]
+
+            # compute gaps and find minimum gap
+            deltas = np.linalg.norm(np.diff(sorted_pts, axis=0), axis=1)
+            if len(deltas) == 0:
+                continue
+            d_min = deltas.min()
+
+            # split on any jump > distance_ratio * d_min
+            segments = []
+            current = [sorted_pts[0]]
+            for pt, gap in zip(sorted_pts[1:], deltas):
+                if gap > distance_ratio * d_min:
+                    if len(current) >= min_inliers:
+                        segments.append(current)
+                    current = [pt]
+                else:
+                    current.append(pt)
+            if len(current) >= min_inliers:
+                segments.append(current)
+
+            # convert back to int tuples
+            for seg in segments:
+                seg_pts = [(int(x), int(y)) for x, y in seg]
+                lines.append(seg_pts)
+
+        return lines
+    def __init__(self,
+        undistort=False,  # Desactivado por defecto ya que no tienes calibración
+        v_fov=0.55,
+        morph_kernel_size=(3, 3),
+        erode_iterations=3,
+        dilate_iterations=2,
+        max_aspect_ratio=10.0,
+        min_area=20,
+        ep=0.035,
+        min_points=5,
+        setpoint=0.7,
+        max_yaw=30.0,
+        max_thr=0.15,
+        w_Kp=2.0,
+        w_Ki=0.0,
+        w_Kd=0.1,
+        v_Kp=0.5,
+        v_Ki=0.0,
+        v_Kd=0.1,
+    ):
+        # Dark mask parameters
+        self.undistort = undistort
+        self.v_fov = v_fov
+        self.morph_kernel = np.ones(morph_kernel_size, np.uint8)
+        self.erode_iterations = erode_iterations
+        self.dilate_iterations = dilate_iterations
+
+        # Find dots parameters
+        self.max_aspect_ratio = max_aspect_ratio
+        self.min_area = min_area
+        self.ep = ep
+
+        # Dotted line parameters
+        self.min_points = min_points
+
+        # Stopping parameters
+        self.yaw_threshold = 5.0
+        self.w_pid = SimplePID(Kp=w_Kp, Ki=w_Ki, Kd=w_Kd, setpoint=0, 
+                              output_limits=(-math.radians(max_yaw), math.radians(max_yaw)))
+        self.v_pid = SimplePID(Kp=v_Kp, Ki=v_Ki, Kd=v_Kd, setpoint=setpoint, 
+                              output_limits=(-max_thr, max_thr))
 
     def get_dark_mask(self, frame, drawing_frame=None):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-        mask = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                   cv2.THRESH_BINARY_INV, 141, 6)
+        # Undistort the frame if needed
+        valid_mask = None
+        if self.undistort:
+            frame, valid_mask = self.undistort_fisheye(frame, zoom=False)
         
+        # Find dark areas using adaptive thresholding
+        mask = self.adaptive_thres_standalone(frame)
+
+        # Crop out the upper part of the mask
         mask[:int(frame.shape[:2][0] * (1-self.v_fov)), :] = 0
+
+        # Crop out invalid areas due to undistortion
+        if valid_mask is not None:
+            mask = cv2.bitwise_and(mask, mask, mask=valid_mask)
+
+        # Erode and dilate to remove noise and fill gaps
         mask = cv2.erode(mask, kernel=self.morph_kernel, iterations=self.erode_iterations)
         mask = cv2.dilate(mask, kernel=self.morph_kernel, iterations=self.dilate_iterations)
         
         if drawing_frame is not None:
             drawing_frame[:] = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
         return mask
 
     def find_dots(self, frame, drawing_frame=None):
         mask = self.get_dark_mask(frame)
+        
+        if drawing_frame is not None:
+            drawing_frame[:] = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
+        # Find quadrilateral contours in the mask with sufficient area
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = [c for c in contours if cv2.contourArea(c) > self.min_area]
         dots = []
         
         for cnt in contours:
+            # Approximate the contour to a polygon
             epsilon = self.ep * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
 
+            # Check if the approximated contour has 4 points (quadrilateral) and is convex
             if len(approx) == 4 and cv2.isContourConvex(approx):
                 x, y, w, h = cv2.boundingRect(approx)
+                # Filter out quadrilaterals that are too elongated
                 if min(w, h) == 0 or max(w, h) / min(w, h) > self.max_aspect_ratio:
                     continue
-                center = (x + w // 2, y + h // 2)
+                
+                pt1, pt2, center, angle, length = self.get_contour_line_info_standalone(approx, fix_vert=False)
                 dots.append(center)
+                
                 if drawing_frame is not None:
                     cv2.circle(drawing_frame, center, 5, (0, 0, 255), -1)
                     cv2.polylines(drawing_frame, [approx], True, (0, 255, 0), 2)
+            else:
+                if drawing_frame is not None:
+                    cv2.polylines(drawing_frame, [approx], True, (255, 0, 0), 2)
         return dots
 
     def find_dotted_lines(self, frame, drawing_frame=None):
         dots = self.find_dots(frame, drawing_frame=drawing_frame)
-        groups = group_dotted_lines_simple(dots, min_inliers=self.min_points)
+        groups = self.group_dotted_lines_simple(dots, min_inliers=self.min_points)
         dotted_lines = [(group[0], group[-1]) for group in groups if len(group) >= 2]
         line_centers = [((line[0][0] + line[1][0]) // 2, (line[0][1] + line[1][1]) // 2) for line in dotted_lines]
         angles = [((math.degrees(math.atan2(l[1][1] - l[0][1], l[1][0] - l[0][0])) + 90) % 180) - 90 for l in dotted_lines]
@@ -303,6 +493,7 @@ class IntersectionDetectorAdvanced:
             
         dotted_lines_data = list(zip(dotted_lines, centers, angles))
 
+        # Find the line with the longest distance between endpoints
         def line_length(line_data):
             (pt1, pt2), center, angle = line_data
             return math.hypot(pt2[0] - pt1[0], pt2[1] - pt1[1])
@@ -318,8 +509,11 @@ class IntersectionDetectorAdvanced:
 
     def stop_at_intersection(self, frame, drawing_frame=None, intersection=None):
         throttle, yaw = 0, 0
+
+        # Get the intersection
         intersection = self.find_intersection(frame, drawing_frame=drawing_frame) if intersection is None else intersection
 
+        # Align the robot with the intersection
         if intersection is not None:
             line, center, angle = intersection
             error = math.radians(angle)
@@ -1671,7 +1865,7 @@ class LineFollowerWithYOLONode(Node):
             confidence_threshold=confidence_threshold
         )
         
-        self.intersection_detector_advanced = IntersectionDetectorAdvanced(
+        self.intersection_detector_advanced = IntersectionDetector(
             v_fov=0.6,
             min_points=4
         )
