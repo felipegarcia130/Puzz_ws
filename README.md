@@ -43,27 +43,6 @@ This repository contains the complete ROS 2 workspace for the **Puzzlebot**, a d
 | `puzzlebot_teleop/` | Teleoperation package for manual robot control |
 | `te3002b_sim_bridge/` | Simulation bridge for TE3002B track simulator integration |
 
-## 🛠️ Installation
-
-### Prerequisites
-- ROS 2 Humble (on Ubuntu 22.04)
-- Python 3.10+
-- OpenCV 4.x
-
-### Setup
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/puzz_ws.git
-cd puzz_ws
-
-# Install dependencies
-rosdep update
-rosdep install --from-paths src --ignore-src -r -y
-
-# Build the workspace
-colcon build
-source install/setup.bash
-```
 
 ## 🚀 Usage
 
@@ -114,15 +93,6 @@ ros2 launch my_navigation_system navigation.launch.py
 ros2 run pb_camera_bridge camera_bridge_node
 ```
 
-### Creating New Packages
-```bash
-# Create a new Python package
-ros2 pkg create --build-type ament_python package_name --node-name node_name
-
-# Build specific packages
-colcon build --packages-select package_name
-```
-
 ## 📊 Implemented Modules
 
 ### Control Systems
@@ -167,22 +137,6 @@ The `te3002b_sim_bridge` package enables seamless integration with the TE3002B t
 ### Camera Integration
 Multiple camera packages (`pb_camera_bridge`, `green_tracker_pkg`) provide comprehensive camera support for both hardware and simulation environments, enabling robust computer vision applications.
 
-## 📚 Documentation
-
-Complete documentation is available in the `docs/` directory, including:
-- Hardware setup guide
-- Software architecture overview
-- API reference
-- Testing procedures
-- Simulation setup guide
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## 📜 License
 
@@ -193,21 +147,14 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 | Member | Role |
 |--------|------|
 | **Felipe de Jesús García García** | ROS Integration Lead |
-| **Samuel Cabrera** | Coppelia Sim Simulation Specialist |
-| **José Luis Urquieta** | Computer Vision Logic |
-| **Uriel Lemuz** | 3D Modeling and Construction |
-| **Santiago Lopez** | Documentation |
+| **Samuel Cabrera** | Coppelia Sim Simulation Specialist and Computer Vision Logic|
 
-## 👏 Acknowledgements
 
-- ROS 2 Community
-- Robotics Lab at [Your Institution]
-- Contributors and maintainers
 
 ---
 
 <div align="center">
   
-📫 **Contact**: [A01705893@tec.com]
+📫 **Contact**: [garciafjg@outlook.com]
 
 </div>
