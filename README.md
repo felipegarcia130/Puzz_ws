@@ -1,4 +1,4 @@
-# 🤖 Puzzlebot ROS 2 Workspace
+# 🤖 Line-Following and Signal Detection - PuzzleBot
 
 <div align="center">
   <img src=https://github.com/user-attachments/assets/6c20fec5-3883-4be3-b402-44fbccc083f6>
